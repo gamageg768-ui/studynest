@@ -1,17 +1,18 @@
 import { NextResponse } from "next/server";
+import Groq from "groq-sdk";
 
-const OLLAMA_URL = process.env.OLLAMA_URL || "http://localhost:11434";
-const OLLAMA_MODEL = process.env.OLLAMA_MODEL || "llama3";
+const GROQ_MODEL = process.env.GROQ_MODEL || "llama3-70b-8192";
 
 export async function GET() {
+  if (!process.env.GROQ_API_KEY) {
+    return NextResponse.json({ ok: false, error: "GROQ_API_KEY not set" }, { status: 503 });
+  }
   try {
-    const r = await fetch(`${OLLAMA_URL}/api/tags`, {
-      signal: AbortSignal.timeout(5000),
-    });
-    const data = await r.json();
-    const models = (data.models || []).map((m: any) => m.name || "");
-    const model_available = models.some((m: string) => m.includes(OLLAMA_MODEL));
-    return NextResponse.json({ ok: true, ollama_url: OLLAMA_URL, model: OLLAMA_MODEL, model_available, all_models: models });
+    const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
+    const models = await groq.models.list();
+    const modelIds = models.data.map((m) => m.id);
+    const model_available = modelIds.includes(GROQ_MODEL);
+    return NextResponse.json({ ok: true, provider: "groq", model: GROQ_MODEL, model_available, all_models: modelIds });
   } catch (e: any) {
     return NextResponse.json({ ok: false, error: String(e) }, { status: 503 });
   }

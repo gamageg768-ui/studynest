@@ -101,7 +101,7 @@ export const shareApi = {
     api
       .get<{ shares: Share[] }>(`/notebooks/${notebookId}/shares`)
       .then((r) => r.data.shares),
-  add: (notebookId: number, username: string, permission: "read" | "edit") =>
+  add: (notebookId: number, username: string, permission: "read" | "edit" | "admin") =>
     api
       .post(`/notebooks/${notebookId}/shares`, { username, permission })
       .then((r) => r.data),
@@ -169,6 +169,33 @@ export const aiApi = {
     api
       .post<{ source: string; suggested_title: string; notebook_id: number }>(
         "/ai/flowchart",
+        params
+      )
+      .then((r) => r.data),
+  conceptMap: (params: { page_id?: number; notebook_id?: number }) =>
+    api
+      .post<{ mermaid: string; concepts: string[] }>("/ai/concept-map", params)
+      .then((r) => r.data),
+  weaknessAnalysis: (notebook_id: number) =>
+    api
+      .post<{
+        weak_areas: {
+          concept: string;
+          explanation: string;
+          suggested_cards: { front: string; back: string }[];
+        }[];
+      }>("/ai/weakness-analysis", { notebook_id })
+      .then((r) => r.data),
+  suggestTags: (page_id: number) =>
+    api
+      .post<{
+        suggested: { tag_id: number | null; name: string; isNew: boolean; color: string }[];
+      }>("/ai/suggest-tags", { page_id })
+      .then((r) => r.data),
+  prerequisites: (params: { page_id?: number; notebook_id?: number }) =>
+    api
+      .post<{ prerequisites: { concept: string; importance: "required" | "helpful" }[] }>(
+        "/ai/prerequisites",
         params
       )
       .then((r) => r.data),
@@ -265,6 +292,51 @@ export const reviewApi = {
 /* ---------- Stats ---------- */
 export const statsApi = {
   get: () => api.get<StudyStats>("/stats").then((r) => r.data),
+};
+
+/* ---------- Public Links ---------- */
+export const publicLinkApi = {
+  get: (notebookId: number) =>
+    api.get<{ link: { token: string; created_at: string } | null }>(`/notebooks/${notebookId}/public-link`).then((r) => r.data.link),
+  create: (notebookId: number) =>
+    api.post<{ token: string }>(`/notebooks/${notebookId}/public-link`).then((r) => r.data.token),
+  revoke: (notebookId: number) => api.delete(`/notebooks/${notebookId}/public-link`),
+};
+
+/* ---------- Leaderboard & Progress ---------- */
+export const groupApi = {
+  leaderboard: (notebookId: number) =>
+    api.get<{ leaderboard: any[] }>(`/notebooks/${notebookId}/leaderboard`).then((r) => r.data.leaderboard),
+  progress: (notebookId: number) =>
+    api.get<{ progress: any[] }>(`/notebooks/${notebookId}/progress`).then((r) => r.data.progress),
+};
+
+/* ---------- Page Comments ---------- */
+export const commentApi = {
+  list: (pageId: number) =>
+    api.get<{ comments: any[] }>(`/pages/${pageId}/comments`).then((r) => r.data.comments),
+  create: (pageId: number, body: string, anchor_text?: string) =>
+    api.post<any>(`/pages/${pageId}/comments`, { body, anchor_text }).then((r) => r.data),
+  resolve: (commentId: number) =>
+    api.patch(`/comments/${commentId}/resolve`).then((r) => r.data),
+};
+
+/* ---------- Study Events ---------- */
+export const studyEventApi = {
+  list: (notebookId: number) =>
+    api.get<{ events: any[] }>(`/notebooks/${notebookId}/events`).then((r) => r.data.events),
+  create: (notebookId: number, data: { title: string; scheduled_at: string; duration_minutes?: number; agenda?: string }) =>
+    api.post<any>(`/notebooks/${notebookId}/events`, data).then((r) => r.data),
+};
+
+/* ---------- Page Assignments ---------- */
+export const assignApi = {
+  get: (pageId: number) =>
+    api.get<{ assignment: any | null }>(`/pages/${pageId}/assign`).then((r) => r.data.assignment),
+  assign: (pageId: number, assigned_to: number, due_date?: string) =>
+    api.patch<any>(`/pages/${pageId}/assign`, { assigned_to, due_date }).then((r) => r.data),
+  unassign: (pageId: number) =>
+    api.patch(`/pages/${pageId}/assign`, { assigned_to: null }).then((r) => r.data),
 };
 
 /* ---------- Flowcharts ---------- */

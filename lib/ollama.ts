@@ -1,34 +1,26 @@
-const OLLAMA_URL = process.env.OLLAMA_URL || "http://localhost:11434";
-const OLLAMA_MODEL = process.env.OLLAMA_MODEL || "llama3";
+import Groq from "groq-sdk";
+
+const GROQ_MODEL = process.env.GROQ_MODEL || "llama3-70b-8192";
+
+let _groq: Groq | null = null;
+function getGroq() {
+  if (!_groq) _groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
+  return _groq;
+}
 
 export async function callOllama(prompt: string, system?: string): Promise<string> {
-  const payload: Record<string, unknown> = {
-    model: OLLAMA_MODEL,
-    prompt,
-    stream: false,
-  };
-  if (system) payload.system = system;
+  const messages: Groq.Chat.ChatCompletionMessageParam[] = [];
+  if (system) messages.push({ role: "system", content: system });
+  messages.push({ role: "user", content: prompt });
 
-  let r: Response;
-  try {
-    r = await fetch(`${OLLAMA_URL}/api/generate`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-      signal: AbortSignal.timeout(120_000),
-    });
-  } catch (e: any) {
-    if (e?.name === "TimeoutError") {
-      throw new Error("Ollama timed out. Try a smaller model or shorter input.");
-    }
-    throw new Error(
-      `Could not reach Ollama at ${OLLAMA_URL}. Is it running? Try \`ollama serve\`.`
-    );
-  }
+  const completion = await getGroq().chat.completions.create({
+    messages,
+    model: GROQ_MODEL,
+    temperature: 0.7,
+    max_tokens: 2048,
+  });
 
-  if (!r.ok) throw new Error(`Ollama returned HTTP ${r.status}`);
-  const data = await r.json();
-  return (data.response || "").trim();
+  return (completion.choices[0]?.message?.content || "").trim();
 }
 
 export function fetchPageContent(

@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { flashcardApi, aiApi, getErrorMessage } from "@/lib/client";
 import type { FlashcardSet, FlashcardSetWithCards, Flashcard } from "@/types";
 import { getSocket } from "@/lib/socket";
@@ -59,6 +59,8 @@ export default function FlashcardsPanel({ notebookId, pages, canEdit, onClose }:
   const [editCards, setEditCards] = useState<{ front: string; back: string }[]>([]);
   const [saving, setSaving] = useState(false);
   const [aiLoading, setAiLoading] = useState(false);
+  const [raceActive, setRaceActive] = useState(false);
+  const [raceScores, setRaceScores] = useState<Record<number, { display_name: string; correct: number; total: number }>>({});
   const [selectedPageId, setSelectedPageId] = useState<number | "">(pages[0]?.id ?? "");
   const [aiCount, setAiCount] = useState(8);
   const token = typeof window !== "undefined" ? localStorage.getItem("studynest_token") || "" : "";
@@ -81,9 +83,13 @@ export default function FlashcardsPanel({ notebookId, pages, canEdit, onClose }:
     socket.on("study_user_left", (data: { user: { id: number; display_name: string } }) => {
       setStudyParticipants((p) => p.filter((x) => x.id !== data.user.id));
     });
+    socket.on("race_started", (data: { scores: any }) => { setRaceActive(true); setRaceScores(data.scores); setFlipped(false); setCardIndex(0); });
+    socket.on("race_scores", (data: { scores: any }) => setRaceScores(data.scores));
+    socket.on("race_ended", (data: { scores: any }) => { setRaceActive(false); setRaceScores(data.scores); });
     return () => {
       socket.emit("leave_study", { set_id: currentSet.id });
       socket.off("study_state"); socket.off("study_navigate"); socket.off("study_user_joined"); socket.off("study_user_left");
+      socket.off("race_started"); socket.off("race_scores"); socket.off("race_ended");
     };
   }, [view, currentSet?.id]);
 
@@ -230,22 +236,55 @@ export default function FlashcardsPanel({ notebookId, pages, canEdit, onClose }:
         {view === "study" && currentSet && (
           <div className="fc-body fc-study">
             <StudyAvatars participants={studyParticipants} />
+            {studyParticipants.length >= 2 && !raceActive && (
+              <div style={{ textAlign: "center", marginBottom: 8 }}>
+                <button
+                  className="btn btn-secondary"
+                  style={{ fontSize: 12 }}
+                  onClick={() => getSocket().emit("race_start", { token, set_id: currentSet.id })}
+                >
+                  🏁 Start Race Mode
+                </button>
+              </div>
+            )}
+            {raceActive && (
+              <div style={{ background: "var(--surface-soft)", borderRadius: 8, padding: "8px 12px", marginBottom: 12 }}>
+                <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 6 }}>🏁 Race Scores</div>
+                {Object.entries(raceScores).sort(([,a],[,b]) => b.correct - a.correct).map(([uid, s]) => (
+                  <div key={uid} style={{ display: "flex", justifyContent: "space-between", fontSize: 13, padding: "2px 0" }}>
+                    <span>{s.display_name}</span>
+                    <span style={{ fontWeight: 600, color: "var(--accent)" }}>{s.correct}/{s.total}</span>
+                  </div>
+                ))}
+                <button className="btn btn-ghost" style={{ fontSize: 11, marginTop: 6 }} onClick={() => getSocket().emit("race_end", { token, set_id: currentSet.id })}>End Race</button>
+              </div>
+            )}
             {cards.length === 0 ? (
               <div className="empty-state">No cards in this set.</div>
             ) : (
               <>
                 <div className="fc-progress">{cardIndex + 1} / {cards.length}</div>
                 <FlipCard card={current} flipped={flipped} onFlip={() => setFlipped((f) => !f)} />
-                <div className="fc-nav">
-                  <button className="btn btn-secondary" disabled={cardIndex === 0} onClick={() => gotoCard(cardIndex - 1)}>← Prev</button>
-                  <button className="btn btn-ghost" onClick={shuffleCards} title="Shuffle">🔀 Shuffle</button>
-                  <button className="btn btn-secondary" disabled={cardIndex === cards.length - 1} onClick={() => gotoCard(cardIndex + 1)}>Next →</button>
-                </div>
-                <div className="fc-dots">
-                  {cards.map((_, i) => (
-                    <div key={i} className={`fc-dot ${i === cardIndex ? "fc-dot-active" : ""}`} onClick={() => gotoCard(i)} />
-                  ))}
-                </div>
+                {raceActive && flipped && (
+                  <div style={{ display: "flex", gap: 8, justifyContent: "center", marginTop: 8 }}>
+                    <button className="btn btn-primary" style={{ fontSize: 13 }} onClick={() => { getSocket().emit("race_answer", { token, set_id: currentSet.id, correct: true }); gotoCard(Math.min(cardIndex + 1, cards.length - 1)); setFlipped(false); }}>✓ Got it</button>
+                    <button className="btn btn-secondary" style={{ fontSize: 13 }} onClick={() => { getSocket().emit("race_answer", { token, set_id: currentSet.id, correct: false }); gotoCard(Math.min(cardIndex + 1, cards.length - 1)); setFlipped(false); }}>✗ Missed</button>
+                  </div>
+                )}
+                {!raceActive && (
+                  <>
+                    <div className="fc-nav">
+                      <button className="btn btn-secondary" disabled={cardIndex === 0} onClick={() => gotoCard(cardIndex - 1)}>← Prev</button>
+                      <button className="btn btn-ghost" onClick={shuffleCards} title="Shuffle">🔀 Shuffle</button>
+                      <button className="btn btn-secondary" disabled={cardIndex === cards.length - 1} onClick={() => gotoCard(cardIndex + 1)}>Next →</button>
+                    </div>
+                    <div className="fc-dots">
+                      {cards.map((_, i) => (
+                        <div key={i} className={`fc-dot ${i === cardIndex ? "fc-dot-active" : ""}`} onClick={() => gotoCard(i)} />
+                      ))}
+                    </div>
+                  </>
+                )}
               </>
             )}
           </div>

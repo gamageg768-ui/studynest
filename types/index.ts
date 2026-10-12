@@ -15,7 +15,7 @@ export interface Notebook {
   is_pinned?: 0 | 1;
   created_at: string;
   updated_at: string;
-  permission?: "owner" | "edit" | "read";
+  permission?: "owner" | "edit" | "read" | "admin";
   owner_name?: string;
   pages?: PageSummary[];
 }
@@ -34,7 +34,7 @@ export interface Page {
   content: string;
   created_at: string;
   updated_at: string;
-  permission?: "owner" | "edit" | "read";
+  permission?: "owner" | "edit" | "read" | "admin";
   tags?: Tag[];
 }
 
@@ -43,7 +43,7 @@ export interface Share {
   user_id: number;
   username: string;
   display_name: string;
-  permission: "read" | "edit";
+  permission: "read" | "edit" | "admin";
 }
 
 export interface Attachment {
@@ -120,7 +120,7 @@ export interface PageVersionFull extends PageVersion {
 
 export interface Notification {
   id: number;
-  type: "share" | "chat" | string;
+  type: "share" | "chat" | "mention" | "comment" | "event" | "assignment" | string;
   title: string;
   body: string;
   data: string;

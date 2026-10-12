@@ -6,6 +6,7 @@ import { pageApi, notebookApi, api, getErrorMessage } from "@/lib/client";
 import type { Notebook, Page } from "@/types";
 import AIPanel from "@/components/AIPanel";
 import PomodoroTimer from "@/components/PomodoroTimer";
+import PageComments from "@/components/PageComments";
 import { useNotebookSession } from "@/contexts/SessionContext";
 
 interface PageVersion {
@@ -369,7 +370,8 @@ export default function PageEditorPage({ params }: { params: { id: string; pageI
             </div>
           </div>
         </div>
-        <AIPanel pageId={page.id} />
+        <AIPanel pageId={page.id} notebookId={notebookId} />
+        <PageComments pageId={page.id} canResolve={page.permission === "owner" || page.permission === "admin"} />
       </div>
 
       {showHistory && (

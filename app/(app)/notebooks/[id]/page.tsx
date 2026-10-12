@@ -9,7 +9,11 @@ import SessionPanel from "@/components/SessionPanel";
 import FilesPanel from "@/components/FilesPanel";
 import FlashcardsPanel from "@/components/FlashcardsPanel";
 import FlowchartPanel from "@/components/FlowchartPanel";
+import GroupLeaderboard from "@/components/GroupLeaderboard";
+import StudyEvents from "@/components/StudyEvents";
+import QuizBattle from "@/components/QuizBattle";
 import { useNotebookSession } from "@/contexts/SessionContext";
+import { useAuth } from "@/contexts/AuthContext";
 
 export default function NotebookPage({ params }: { params: { id: string } }) {
   const notebookId = Number(params.id);
@@ -21,10 +25,14 @@ export default function NotebookPage({ params }: { params: { id: string } }) {
   const [showFiles, setShowFiles] = useState(false);
   const [showFlashcards, setShowFlashcards] = useState(false);
   const [showFlowcharts, setShowFlowcharts] = useState(false);
+  const [showLeaderboard, setShowLeaderboard] = useState(false);
+  const [showEvents, setShowEvents] = useState(false);
+  const [showBattle, setShowBattle] = useState(false);
   const [guide, setGuide] = useState("");
   const [guideLoading, setGuideLoading] = useState(false);
   const [guideError, setGuideError] = useState("");
   const { participants } = useNotebookSession(notebookId);
+  const { user } = useAuth();
 
   const refresh = () => {
     setLoading(true);
@@ -86,6 +94,9 @@ export default function NotebookPage({ params }: { params: { id: string } }) {
           <button className="btn btn-secondary" onClick={() => setShowFlowcharts(true)}>🔷 Flowcharts</button>
           <button className="btn btn-secondary" onClick={() => setShowFiles(true)}>📎 Files</button>
           {isOwner && <button className="btn btn-secondary" onClick={() => setShowShare(true)}>👥 Share</button>}
+          <button className="btn btn-secondary" onClick={() => setShowLeaderboard(true)}>🏆 Leaderboard</button>
+          <button className="btn btn-secondary" onClick={() => setShowEvents(true)}>📅 Sessions</button>
+          <button className="btn btn-secondary" onClick={() => setShowBattle(true)}>⚡ Quiz Battle</button>
           <button className="btn btn-secondary" onClick={buildGuide} disabled={guideLoading || (nb.pages || []).length === 0}>🤖 Study guide</button>
           {isOwner && <button className="btn btn-danger" onClick={deleteNotebook}>Delete</button>}
         </div>
@@ -127,6 +138,9 @@ export default function NotebookPage({ params }: { params: { id: string } }) {
       {showFiles && <FilesPanel notebookId={notebookId} canEdit={canEdit} onClose={() => setShowFiles(false)} />}
       {showFlashcards && <FlashcardsPanel notebookId={notebookId} pages={nb.pages ?? []} canEdit={canEdit} onClose={() => setShowFlashcards(false)} />}
       {showFlowcharts && <FlowchartPanel notebookId={notebookId} pages={nb.pages ?? []} canEdit={canEdit} onClose={() => setShowFlowcharts(false)} />}
+      {showLeaderboard && <GroupLeaderboard notebookId={notebookId} onClose={() => setShowLeaderboard(false)} />}
+      {showEvents && <StudyEvents notebookId={notebookId} canCreate={canEdit} onClose={() => setShowEvents(false)} />}
+      {showBattle && user && <QuizBattle notebookId={notebookId} userId={user.id} onClose={() => setShowBattle(false)} />}
     </>
   );
 }

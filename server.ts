@@ -12,8 +12,18 @@ const handle = app.getRequestHandler();
 
 // In-memory room state
 const _sessions: Record<string, Record<string, { id: number; display_name: string }>> = {};
-const _studyRooms: Record<string, { card_index: number; sids: Record<string, { id: number; display_name: string }> }> = {};
+const _studyRooms: Record<string, { card_index: number; sids: Record<string, { id: number; display_name: string }>; raceActive: boolean; raceScores: Record<number, { display_name: string; correct: number; total: number }> }> = {};
 const _flowchartRooms: Record<string, Record<string, { id: number; display_name: string }>> = {};
+const _typingUsers: Record<string, Record<number, { display_name: string; timer: ReturnType<typeof setTimeout> }>> = {};
+type QuizBattleState = {
+  questions: { question: string; options: string[]; correct: number }[];
+  currentQ: number;
+  scores: Record<number, { display_name: string; points: number }>;
+  sids: Record<string, { id: number; display_name: string }>;
+  hostId: number;
+  active: boolean;
+};
+const _quizBattles: Record<string, QuizBattleState> = {};
 
 function recentMessages(notebookId: number, limit = 50) {
   const db = getDb();
@@ -63,6 +73,17 @@ function removeSidFromAll(
       const stillHere = Object.values(participants).some((p) => p.id === user.id);
       if (!stillHere) io.to(room).emit("fc_user_left", { user });
       if (Object.keys(participants).length === 0) delete _flowchartRooms[room];
+      break;
+    }
+  }
+
+  // quiz battles
+  for (const [room, state] of Object.entries(_quizBattles)) {
+    if (sid in state.sids) {
+      const user = state.sids[sid];
+      delete state.sids[sid];
+      io.to(room).emit("qb_user_left", { user_id: user.id });
+      if (Object.keys(state.sids).length === 0) delete _quizBattles[room];
       break;
     }
   }
@@ -170,32 +191,54 @@ app.prepare().then(() => {
         )
         .run(notebookId, user.id, user.display_name, text, createdAt);
 
+      const msgId = Number(result.lastInsertRowid);
       const room = `notebook_${notebookId}`;
       io.to(room).emit("new_message", {
-        id: result.lastInsertRowid,
+        id: msgId,
         user_id: user.id,
         display_name: user.display_name,
         message: text,
         created_at: createdAt,
+        reactions: {},
       });
 
-      // Notify notebook accessors who are NOT currently in the room
+      // Detect @mentions and notify mentioned users
+      const mentionPattern = /@(\w+)/g;
+      let match;
+      const mentionedUsernames = new Set<string>();
+      while ((match = mentionPattern.exec(text)) !== null) {
+        mentionedUsernames.add(match[1].toLowerCase());
+      }
+
+      // Notify notebook accessors who are NOT currently in the room + handle @mentions
       try {
         const nb = db.prepare("SELECT title, owner_id FROM notebooks WHERE id = ?").get(notebookId) as any;
         if (nb) {
           const accessors = db.prepare(
-            `SELECT DISTINCT u.id FROM users u
+            `SELECT DISTINCT u.id, u.username FROM users u
              WHERE u.id = ?
              UNION
-             SELECT s.shared_with_user_id FROM shares s WHERE s.notebook_id = ?`
+             SELECT u.id, u.username FROM users u
+             JOIN shares s ON s.shared_with_user_id = u.id WHERE s.notebook_id = ?`
           ).all(nb.owner_id, notebookId) as any[];
 
-          const roomSockets = io.sockets.adapter.rooms.get(room) ?? new Set<string>();
           const activeSessions = _sessions[room] ?? {};
           const activeUserIds = new Set(Object.values(activeSessions).map((p: any) => p.id));
 
           for (const accessor of accessors) {
-            if (accessor.id !== user.id && !activeUserIds.has(accessor.id)) {
+            if (accessor.id === user.id) continue;
+            const isMentioned = mentionedUsernames.has((accessor.username || "").toLowerCase());
+            if (isMentioned) {
+              db.prepare(
+                `INSERT INTO notifications (user_id, type, title, body, data)
+                 VALUES (?, 'mention', ?, ?, ?)`
+              ).run(
+                accessor.id,
+                `${user.display_name} mentioned you`,
+                `In ${nb.title}: ${text.slice(0, 80)}`,
+                JSON.stringify({ notebook_id: notebookId })
+              );
+            } else if (!activeUserIds.has(accessor.id)) {
               db.prepare(
                 `INSERT INTO notifications (user_id, type, title, body, data)
                  VALUES (?, 'chat', ?, ?, ?)`
@@ -209,6 +252,226 @@ app.prepare().then(() => {
           }
         }
       } catch {}
+    });
+
+    // ── Typing indicators ──────────────────────────────────────────
+
+    socket.on("typing_start", (data: any) => {
+      data = data || {};
+      const token: string = data.token || "";
+      const notebookId: number = data.notebook_id;
+      if (!notebookId) return;
+      const user = getUserFromToken(token);
+      if (!user) return;
+      const room = `notebook_${notebookId}`;
+      if (!_typingUsers[room]) _typingUsers[room] = {};
+      // Clear existing timer for this user
+      if (_typingUsers[room][user.id]) clearTimeout(_typingUsers[room][user.id].timer);
+      // Auto-clear after 4s of no activity
+      const timer = setTimeout(() => {
+        delete _typingUsers[room]?.[user.id];
+        socket.to(room).emit("typing_clear", { user_id: user.id });
+      }, 4000);
+      _typingUsers[room][user.id] = { display_name: user.display_name, timer };
+      socket.to(room).emit("typing_user", { user_id: user.id, display_name: user.display_name });
+    });
+
+    socket.on("typing_stop", (data: any) => {
+      data = data || {};
+      const token: string = data.token || "";
+      const notebookId: number = data.notebook_id;
+      if (!notebookId) return;
+      const user = getUserFromToken(token);
+      if (!user) return;
+      const room = `notebook_${notebookId}`;
+      if (_typingUsers[room]?.[user.id]) {
+        clearTimeout(_typingUsers[room][user.id].timer);
+        delete _typingUsers[room][user.id];
+      }
+      socket.to(room).emit("typing_clear", { user_id: user.id });
+    });
+
+    // ── Emoji reactions ────────────────────────────────────────────
+
+    socket.on("add_reaction", (data: any) => {
+      data = data || {};
+      const token: string = data.token || "";
+      const messageId: number = data.message_id;
+      const emoji: string = (data.emoji || "").trim();
+      if (!messageId || !emoji) return;
+      const user = getUserFromToken(token);
+      if (!user) return;
+      const db = getDb();
+      const msg = db.prepare("SELECT notebook_id FROM chat_messages WHERE id = ?").get(messageId) as any;
+      if (!msg) return;
+      const { canAccess } = userCanAccess(msg.notebook_id, user.id);
+      if (!canAccess) return;
+      try {
+        db.prepare(
+          "INSERT OR IGNORE INTO message_reactions (message_id, user_id, emoji) VALUES (?, ?, ?)"
+        ).run(messageId, user.id, emoji);
+        const room = `notebook_${msg.notebook_id}`;
+        io.to(room).emit("reaction_added", { message_id: messageId, emoji, user_id: user.id, display_name: user.display_name });
+      } catch {}
+    });
+
+    socket.on("remove_reaction", (data: any) => {
+      data = data || {};
+      const token: string = data.token || "";
+      const messageId: number = data.message_id;
+      const emoji: string = (data.emoji || "").trim();
+      if (!messageId || !emoji) return;
+      const user = getUserFromToken(token);
+      if (!user) return;
+      const db = getDb();
+      const msg = db.prepare("SELECT notebook_id FROM chat_messages WHERE id = ?").get(messageId) as any;
+      if (!msg) return;
+      db.prepare("DELETE FROM message_reactions WHERE message_id = ? AND user_id = ? AND emoji = ?").run(messageId, user.id, emoji);
+      const room = `notebook_${msg.notebook_id}`;
+      io.to(room).emit("reaction_removed", { message_id: messageId, emoji, user_id: user.id });
+    });
+
+    // ── Live Quiz Battle ───────────────────────────────────────────
+
+    socket.on("join_quiz_battle", (data: any) => {
+      data = data || {};
+      const token: string = data.token || "";
+      const notebookId: number = data.notebook_id;
+      if (!notebookId) return;
+      const user = getUserFromToken(token);
+      if (!user) return;
+      const { canAccess } = userCanAccess(notebookId, user.id);
+      if (!canAccess) return;
+      const room = `qb_${notebookId}`;
+      socket.join(room);
+      if (!_quizBattles[room]) {
+        _quizBattles[room] = { questions: [], currentQ: -1, scores: {}, sids: {}, hostId: user.id, active: false };
+      }
+      const state = _quizBattles[room];
+      state.sids[socket.id] = { id: user.id, display_name: user.display_name };
+      if (!state.scores[user.id]) state.scores[user.id] = { display_name: user.display_name, points: 0 };
+      socket.emit("qb_state", { active: state.active, currentQ: state.currentQ, scores: state.scores, participants: Object.values(state.sids), hostId: state.hostId, question: state.active && state.currentQ >= 0 ? { ...state.questions[state.currentQ], correct: -1 } : null });
+      socket.to(room).emit("qb_user_joined", { user: { id: user.id, display_name: user.display_name } });
+    });
+
+    socket.on("leave_quiz_battle", (data: any) => {
+      data = data || {};
+      const notebookId: number = data.notebook_id;
+      if (!notebookId) return;
+      const room = `qb_${notebookId}`;
+      socket.leave(room);
+      const state = _quizBattles[room];
+      if (state && socket.id in state.sids) {
+        const user = state.sids[socket.id];
+        delete state.sids[socket.id];
+        if (Object.keys(state.sids).length === 0) delete _quizBattles[room];
+        else io.to(room).emit("qb_user_left", { user_id: user.id });
+      }
+    });
+
+    socket.on("qb_start", (data: any) => {
+      data = data || {};
+      const token: string = data.token || "";
+      const notebookId: number = data.notebook_id;
+      const questions = data.questions;
+      if (!notebookId || !Array.isArray(questions) || questions.length === 0) return;
+      const user = getUserFromToken(token);
+      if (!user) return;
+      const room = `qb_${notebookId}`;
+      const state = _quizBattles[room];
+      if (!state || state.hostId !== user.id) return;
+      state.questions = questions;
+      state.currentQ = 0;
+      state.active = true;
+      // Reset all scores
+      for (const uid of Object.keys(state.scores)) state.scores[Number(uid)].points = 0;
+      const q = { ...state.questions[0], correct: -1 };
+      io.to(room).emit("qb_question", { question: q, index: 0, total: questions.length, scores: state.scores });
+    });
+
+    socket.on("qb_answer", (data: any) => {
+      data = data || {};
+      const token: string = data.token || "";
+      const notebookId: number = data.notebook_id;
+      const answer: number = data.answer;
+      if (!notebookId || answer == null) return;
+      const user = getUserFromToken(token);
+      if (!user) return;
+      const room = `qb_${notebookId}`;
+      const state = _quizBattles[room];
+      if (!state || !state.active || state.currentQ < 0) return;
+      const q = state.questions[state.currentQ];
+      const correct = answer === q.correct;
+      if (correct && state.scores[user.id]) state.scores[user.id].points += 1;
+      io.to(room).emit("qb_scores", { scores: state.scores });
+    });
+
+    socket.on("qb_next", (data: any) => {
+      data = data || {};
+      const token: string = data.token || "";
+      const notebookId: number = data.notebook_id;
+      if (!notebookId) return;
+      const user = getUserFromToken(token);
+      if (!user) return;
+      const room = `qb_${notebookId}`;
+      const state = _quizBattles[room];
+      if (!state || state.hostId !== user.id || !state.active) return;
+      state.currentQ += 1;
+      if (state.currentQ >= state.questions.length) {
+        state.active = false;
+        io.to(room).emit("qb_ended", { scores: state.scores });
+      } else {
+        const q = { ...state.questions[state.currentQ], correct: -1 };
+        io.to(room).emit("qb_question", { question: q, index: state.currentQ, total: state.questions.length, scores: state.scores });
+      }
+    });
+
+    // ── Flashcard Race Mode ────────────────────────────────────────
+
+    socket.on("race_start", (data: any) => {
+      data = data || {};
+      const token: string = data.token || "";
+      const setId: number = data.set_id;
+      if (!setId) return;
+      const user = getUserFromToken(token);
+      if (!user) return;
+      const room = `study_${setId}`;
+      const state = _studyRooms[room];
+      if (!state) return;
+      state.raceActive = true;
+      state.raceScores = {};
+      for (const p of Object.values(state.sids)) {
+        state.raceScores[p.id] = { display_name: p.display_name, correct: 0, total: 0 };
+      }
+      io.to(room).emit("race_started", { scores: state.raceScores });
+    });
+
+    socket.on("race_answer", (data: any) => {
+      data = data || {};
+      const token: string = data.token || "";
+      const setId: number = data.set_id;
+      const correct: boolean = data.correct;
+      if (!setId || correct == null) return;
+      const user = getUserFromToken(token);
+      if (!user) return;
+      const room = `study_${setId}`;
+      const state = _studyRooms[room];
+      if (!state || !state.raceActive) return;
+      if (!state.raceScores[user.id]) state.raceScores[user.id] = { display_name: user.display_name, correct: 0, total: 0 };
+      state.raceScores[user.id].total += 1;
+      if (correct) state.raceScores[user.id].correct += 1;
+      io.to(room).emit("race_scores", { scores: state.raceScores });
+    });
+
+    socket.on("race_end", (data: any) => {
+      data = data || {};
+      const setId: number = data.set_id;
+      if (!setId) return;
+      const room = `study_${setId}`;
+      const state = _studyRooms[room];
+      if (!state) return;
+      state.raceActive = false;
+      io.to(room).emit("race_ended", { scores: state.raceScores });
     });
 
     // ── Flashcard group study ──────────────────────────────────────
@@ -228,7 +491,7 @@ app.prepare().then(() => {
 
       const room = `study_${setId}`;
       socket.join(room);
-      if (!_studyRooms[room]) _studyRooms[room] = { card_index: 0, sids: {} };
+      if (!_studyRooms[room]) _studyRooms[room] = { card_index: 0, sids: {}, raceActive: false, raceScores: {} };
       const state = _studyRooms[room];
       const alreadyPresent = Object.values(state.sids).some((p) => p.id === user.id);
       state.sids[socket.id] = { id: user.id, display_name: user.display_name };

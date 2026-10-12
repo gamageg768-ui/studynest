@@ -31,7 +31,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
   const data = await req.json().catch(() => ({}));
   const targetUsername = ((data.username as string) || "").trim().toLowerCase();
   const permission = (data.permission as string) || "read";
-  if (!["read", "edit"].includes(permission)) return err("Permission must be 'read' or 'edit'", 400);
+  if (!["read", "edit", "admin"].includes(permission)) return err("Permission must be 'read', 'edit', or 'admin'", 400);
   if (!targetUsername) return err("Username is required", 400);
 
   const target = db

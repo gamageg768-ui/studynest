@@ -11,6 +11,7 @@ export async function POST(req: NextRequest) {
   const data = await req.json().catch(() => ({}));
   const pageId = Number(data.page_id);
   const question = ((data.question as string) || "").trim();
+  const mode = (data.mode as string) === "socratic" ? "socratic" : "explain";
   if (!pageId || !question) return err("page_id and question required", 400);
 
   const db = getDb();
@@ -19,10 +20,14 @@ export async function POST(req: NextRequest) {
   const { canAccess } = userCanAccess(page.notebook_id, user.id);
   if (!canAccess) return err("Not found", 404);
 
+  const systemPrompt = mode === "socratic"
+    ? "You are a Socratic tutor. Do NOT give the answer directly. Instead, ask 2-3 probing follow-up questions that guide the student to discover the answer themselves. Reference their notes when helpful. Keep it concise."
+    : "You are a patient tutor. Explain the student's question in simple, friendly terms using examples and analogies. Reference their notes when relevant. Keep your answer under 250 words.";
+
   try {
     const answer = await callOllama(
       `Notes (titled '${page.title}'):\n${page.content}\n\nStudent's question: ${question}`,
-      "You are a patient tutor. Explain the student's question in simple, friendly terms using examples and analogies. Reference their notes when relevant. Keep your answer under 250 words."
+      systemPrompt
     );
     return ok({ answer });
   } catch (e: any) {

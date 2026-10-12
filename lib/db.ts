@@ -178,6 +178,68 @@ CREATE TABLE IF NOT EXISTS page_tags (
 );
 CREATE INDEX IF NOT EXISTS idx_page_tags_page ON page_tags(page_id);
 CREATE INDEX IF NOT EXISTS idx_page_tags_tag ON page_tags(tag_id);
+
+CREATE TABLE IF NOT EXISTS message_reactions (
+    message_id INTEGER NOT NULL,
+    user_id INTEGER NOT NULL,
+    emoji TEXT NOT NULL,
+    PRIMARY KEY (message_id, user_id, emoji),
+    FOREIGN KEY (message_id) REFERENCES chat_messages(id) ON DELETE CASCADE,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_reactions_message ON message_reactions(message_id);
+
+CREATE TABLE IF NOT EXISTS public_links (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    notebook_id INTEGER NOT NULL UNIQUE,
+    token TEXT NOT NULL UNIQUE,
+    created_by INTEGER NOT NULL,
+    expires_at TIMESTAMP,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (notebook_id) REFERENCES notebooks(id) ON DELETE CASCADE,
+    FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS page_comments (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    page_id INTEGER NOT NULL,
+    user_id INTEGER NOT NULL,
+    display_name TEXT NOT NULL,
+    anchor_text TEXT DEFAULT '',
+    body TEXT NOT NULL,
+    resolved INTEGER DEFAULT 0,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (page_id) REFERENCES pages(id) ON DELETE CASCADE,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_comments_page ON page_comments(page_id);
+
+CREATE TABLE IF NOT EXISTS page_assignments (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    page_id INTEGER NOT NULL UNIQUE,
+    assigned_to INTEGER NOT NULL,
+    assigned_by INTEGER NOT NULL,
+    due_date TEXT,
+    status TEXT NOT NULL DEFAULT 'assigned',
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (page_id) REFERENCES pages(id) ON DELETE CASCADE,
+    FOREIGN KEY (assigned_to) REFERENCES users(id) ON DELETE CASCADE,
+    FOREIGN KEY (assigned_by) REFERENCES users(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS study_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    notebook_id INTEGER NOT NULL,
+    created_by INTEGER NOT NULL,
+    title TEXT NOT NULL,
+    scheduled_at TIMESTAMP NOT NULL,
+    duration_minutes INTEGER DEFAULT 60,
+    agenda TEXT DEFAULT '',
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (notebook_id) REFERENCES notebooks(id) ON DELETE CASCADE,
+    FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_study_events_notebook ON study_events(notebook_id, scheduled_at);
 `;
 
 const g = global as typeof global & { _db?: Database.Database };
