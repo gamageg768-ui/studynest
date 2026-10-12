@@ -23,15 +23,15 @@ export async function callOllama(prompt: string, system?: string): Promise<strin
   return (completion.choices[0]?.message?.content || "").trim();
 }
 
-export function fetchPageContent(
-  db: import("better-sqlite3").Database,
+export async function fetchPageContent(
+  sql: import("@neondatabase/serverless").NeonQueryFunction<false, false>,
   pageId: number,
   userId: number,
-  userCanAccess: (nbId: number, userId: number) => { canAccess: boolean; permission: string }
-): { page: any; error?: string } {
-  const page = db.prepare("SELECT * FROM pages WHERE id = ?").get(pageId) as any;
+  userCanAccess: (nbId: number, userId: number) => Promise<{ canAccess: boolean; permission: string }>
+): Promise<{ page: any; error?: string }> {
+  const [page] = await sql`SELECT * FROM pages WHERE id = ${pageId}`;
   if (!page) return { page: null, error: "Not found" };
-  const { canAccess } = userCanAccess(page.notebook_id, userId);
+  const { canAccess } = await userCanAccess(page.notebook_id, userId);
   if (!canAccess) return { page: null, error: "Not found" };
   return { page };
 }

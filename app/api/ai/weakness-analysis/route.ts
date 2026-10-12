@@ -1,38 +1,35 @@
 import { NextRequest } from "next/server";
-import { getDb, userCanAccess } from "@/lib/db";
+import { sql, userCanAccess } from "@/lib/db";
 import { auth, err, ok, isResponse } from "@/lib/api-utils";
 import { callOllama } from "@/lib/ollama";
 
 export const maxDuration = 300;
 
 export async function POST(req: NextRequest) {
-  const user = auth(req);
+  const user = await auth(req);
   if (isResponse(user)) return user;
   const data = await req.json().catch(() => ({}));
   const notebookId = Number(data.notebook_id);
   if (!notebookId) return err("notebook_id required", 400);
 
-  const db = getDb();
-  const { canAccess } = userCanAccess(notebookId, user.id);
+  const { canAccess } = await userCanAccess(notebookId, user.id);
   if (!canAccess) return err("Not found", 404);
 
-  const weakCards = db.prepare(`
+  const weakCards = await sql`
     SELECT f.front, f.back, f.ease_factor, f.repetitions
     FROM flashcards f
     JOIN flashcard_sets fs ON f.set_id = fs.id
-    WHERE fs.notebook_id = ? AND f.ease_factor < 2.2
+    WHERE fs.notebook_id = ${notebookId} AND f.ease_factor < 2.2
     ORDER BY f.ease_factor ASC LIMIT 20
-  `).all(notebookId) as any[];
+  `;
 
-  const quizAttempts = db.prepare(`
+  const quizAttempts = await sql`
     SELECT score, total FROM quiz_attempts
-    WHERE user_id = ? AND notebook_id = ?
+    WHERE user_id = ${user.id} AND notebook_id = ${notebookId}
     ORDER BY created_at DESC LIMIT 5
-  `).all(user.id, notebookId) as any[];
+  `;
 
-  const pageTitles = db.prepare(
-    "SELECT title FROM pages WHERE notebook_id = ?"
-  ).all(notebookId) as any[];
+  const pageTitles = await sql`SELECT title FROM pages WHERE notebook_id = ${notebookId}`;
 
   if (weakCards.length === 0 && quizAttempts.length === 0) {
     return err("Not enough review data yet. Complete some flashcard reviews and quizzes first.", 400);

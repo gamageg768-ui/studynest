@@ -1,24 +1,21 @@
 import { NextRequest, NextResponse } from "next/server";
 import JSZip from "jszip";
-import { getDb, userCanAccess } from "@/lib/db";
+import { sql, userCanAccess } from "@/lib/db";
 import { auth, err, isResponse } from "@/lib/api-utils";
 
 export async function GET(req: NextRequest, { params }: { params: { id: string } }) {
-  const user = auth(req);
+  const user = await auth(req);
   if (isResponse(user)) return user;
   const notebookId = Number(params.id);
-  const db = getDb();
-  const nb = db.prepare("SELECT title FROM notebooks WHERE id = ?").get(notebookId) as any;
+  const [nb] = await sql`SELECT title FROM notebooks WHERE id = ${notebookId}`;
   if (!nb) return err("Not found", 404);
-  const { canAccess } = userCanAccess(notebookId, user.id);
+  const { canAccess } = await userCanAccess(notebookId, user.id);
   if (!canAccess) return err("Not found", 404);
 
-  const pages = db
-    .prepare("SELECT title, content FROM pages WHERE notebook_id = ? ORDER BY created_at ASC")
-    .all(notebookId) as any[];
+  const pages = await sql`SELECT title, content FROM pages WHERE notebook_id = ${notebookId} ORDER BY created_at ASC`;
 
   const zip = new JSZip();
-  pages.forEach((page, i) => {
+  pages.forEach((page: any, i: number) => {
     const safe = (page.title || `page_${i + 1}`).replace(/[^a-z0-9]/gi, "_");
     zip.file(`${safe}.md`, page.content || "");
   });

@@ -9,8 +9,8 @@ export function ok(data: unknown, status = 200) {
   return NextResponse.json(data, { status });
 }
 
-export function auth(req: NextRequest): SessionUser | NextResponse {
-  const user = requireAuth(req);
+export async function auth(req: NextRequest): Promise<SessionUser | NextResponse> {
+  const user = await requireAuth(req);
   if (!user) return err("Unauthorized", 401);
   return user;
 }

@@ -1,22 +1,19 @@
 import { NextRequest } from "next/server";
-import { getDb } from "@/lib/db";
+import { sql } from "@/lib/db";
 import { auth, ok, isResponse } from "@/lib/api-utils";
 
 export async function GET(req: NextRequest) {
-  const user = auth(req);
+  const user = await auth(req);
   if (isResponse(user)) return user;
-  const db = getDb();
 
-  const notifications = db
-    .prepare(
-      `SELECT * FROM notifications WHERE user_id = ?
-       ORDER BY is_read ASC, created_at DESC LIMIT 20`
-    )
-    .all(user.id);
+  const notifications = await sql`
+    SELECT * FROM notifications WHERE user_id = ${user.id}
+    ORDER BY is_read ASC, created_at DESC LIMIT 20
+  `;
 
-  const { count } = db
-    .prepare("SELECT COUNT(*) AS count FROM notifications WHERE user_id = ? AND is_read = 0")
-    .get(user.id) as any;
+  const [countRow] = await sql`
+    SELECT COUNT(*) AS count FROM notifications WHERE user_id = ${user.id} AND is_read = FALSE
+  `;
 
-  return ok({ notifications, unread_count: count });
+  return ok({ notifications, unread_count: countRow?.count ?? 0 });
 }

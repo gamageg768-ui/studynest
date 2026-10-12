@@ -1,33 +1,35 @@
 import { NextRequest } from "next/server";
-import { getDb } from "@/lib/db";
+import { sql } from "@/lib/db";
 import { auth, err, ok, isResponse } from "@/lib/api-utils";
 
 export async function PATCH(req: NextRequest, { params }: { params: { id: string } }) {
-  const user = auth(req);
+  const user = await auth(req);
   if (isResponse(user)) return user;
   const tagId = Number(params.id);
-  const db = getDb();
-  const tag = db.prepare("SELECT user_id FROM tags WHERE id = ?").get(tagId) as any;
+  const [tag] = await sql`SELECT user_id FROM tags WHERE id = ${tagId}`;
   if (!tag || tag.user_id !== user.id) return err("Not found", 404);
 
   const data = await req.json().catch(() => ({}));
-  const sets: string[] = [];
-  const vals: unknown[] = [];
-  if (data.name) { sets.push("name = ?"); vals.push((data.name as string).trim()); }
-  if (data.color) { sets.push("color = ?"); vals.push(data.color); }
-  if (!sets.length) return err("No fields to update", 400);
-  vals.push(tagId);
-  db.prepare(`UPDATE tags SET ${sets.join(", ")} WHERE id = ?`).run(...vals);
-  return ok(db.prepare("SELECT * FROM tags WHERE id = ?").get(tagId));
+  if (!data.name && !data.color) return err("No fields to update", 400);
+
+  const newName = data.name ? (data.name as string).trim() : null;
+  const newColor = data.color ? (data.color as string) : null;
+  await sql`
+    UPDATE tags SET
+      name = COALESCE(${newName}, name),
+      color = COALESCE(${newColor}, color)
+    WHERE id = ${tagId}
+  `;
+  const [updated] = await sql`SELECT * FROM tags WHERE id = ${tagId}`;
+  return ok(updated);
 }
 
 export async function DELETE(req: NextRequest, { params }: { params: { id: string } }) {
-  const user = auth(req);
+  const user = await auth(req);
   if (isResponse(user)) return user;
   const tagId = Number(params.id);
-  const db = getDb();
-  const tag = db.prepare("SELECT user_id FROM tags WHERE id = ?").get(tagId) as any;
+  const [tag] = await sql`SELECT user_id FROM tags WHERE id = ${tagId}`;
   if (!tag || tag.user_id !== user.id) return err("Not found", 404);
-  db.prepare("DELETE FROM tags WHERE id = ?").run(tagId);
+  await sql`DELETE FROM tags WHERE id = ${tagId}`;
   return ok({ ok: true });
 }

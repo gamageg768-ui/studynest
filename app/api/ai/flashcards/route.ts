@@ -1,39 +1,36 @@
 import { NextRequest } from "next/server";
-import { getDb, userCanAccess } from "@/lib/db";
+import { sql, userCanAccess } from "@/lib/db";
 import { auth, err, ok, isResponse } from "@/lib/api-utils";
 import { callOllama } from "@/lib/ollama";
 
 export const maxDuration = 300;
 
 export async function POST(req: NextRequest) {
-  const user = auth(req);
+  const user = await auth(req);
   if (isResponse(user)) return user;
   const data = await req.json().catch(() => ({}));
   const n = Math.max(3, Math.min(Number(data.count || 8), 20));
-  const db = getDb();
 
   let content = "";
   let sourceTitle = "";
   let nbId: number;
 
   if (data.page_id) {
-    const page = db.prepare("SELECT * FROM pages WHERE id = ?").get(Number(data.page_id)) as any;
+    const [page] = await sql`SELECT * FROM pages WHERE id = ${Number(data.page_id)}`;
     if (!page) return err("Not found", 404);
-    const { canAccess } = userCanAccess(page.notebook_id, user.id);
+    const { canAccess } = await userCanAccess(page.notebook_id, user.id);
     if (!canAccess) return err("Not found", 404);
     content = page.content;
     sourceTitle = page.title;
     nbId = page.notebook_id;
   } else if (data.notebook_id) {
-    const { canAccess } = userCanAccess(Number(data.notebook_id), user.id);
+    const { canAccess } = await userCanAccess(Number(data.notebook_id), user.id);
     if (!canAccess) return err("Not found", 404);
-    const pages = db
-      .prepare("SELECT title, content FROM pages WHERE notebook_id = ? ORDER BY created_at")
-      .all(Number(data.notebook_id)) as any[];
-    const nb = db.prepare("SELECT title FROM notebooks WHERE id = ?").get(Number(data.notebook_id)) as any;
+    const pages = await sql`SELECT title, content FROM pages WHERE notebook_id = ${Number(data.notebook_id)} ORDER BY created_at`;
+    const [nb] = await sql`SELECT title FROM notebooks WHERE id = ${Number(data.notebook_id)}`;
     content = pages
-      .filter((p) => (p.content || "").trim())
-      .map((p) => `## ${p.title}\n${p.content}`)
+      .filter((p: any) => (p.content || "").trim())
+      .map((p: any) => `## ${p.title}\n${p.content}`)
       .join("\n\n");
     sourceTitle = nb?.title || "notebook";
     nbId = Number(data.notebook_id);

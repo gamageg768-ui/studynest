@@ -1,44 +1,48 @@
 import { NextRequest } from "next/server";
-import { getDb, userCanAccess } from "@/lib/db";
+import { sql, userCanAccess } from "@/lib/db";
 import { auth, err, ok, isResponse } from "@/lib/api-utils";
 
 export async function GET(req: NextRequest, { params }: { params: { id: string } }) {
-  const user = auth(req);
+  const user = await auth(req);
   if (isResponse(user)) return user;
   const notebookId = Number(params.id);
-  const db = getDb();
-  const { canAccess, permission } = userCanAccess(notebookId, user.id);
+  const { canAccess, permission } = await userCanAccess(notebookId, user.id);
   if (!canAccess) return err("Not found", 404);
   if (permission !== "owner" && permission !== "admin") return err("Owner/admin only", 403);
 
-  const members = db.prepare(
-    `SELECT u.id, u.display_name, u.username FROM users u WHERE u.id = (SELECT owner_id FROM notebooks WHERE id = ?)
-     UNION
-     SELECT u.id, u.display_name, u.username FROM users u JOIN shares s ON s.shared_with_user_id = u.id WHERE s.notebook_id = ?`
-  ).all(notebookId, notebookId) as any[];
+  const members = await sql`
+    SELECT u.id, u.display_name, u.username FROM users u WHERE u.id = (SELECT owner_id FROM notebooks WHERE id = ${notebookId})
+    UNION
+    SELECT u.id, u.display_name, u.username FROM users u JOIN shares s ON s.shared_with_user_id = u.id WHERE s.notebook_id = ${notebookId}
+  `;
 
-  const weekAgo = new Date(Date.now() - 7 * 24 * 3600 * 1000).toISOString().slice(0, 19);
+  const weekAgo = new Date(Date.now() - 7 * 24 * 3600 * 1000).toISOString();
 
-  const rows = members.map((m: any) => {
-    const weeklyStudy = (db.prepare(
-      "SELECT COALESCE(SUM(duration_seconds), 0) AS t FROM study_sessions WHERE user_id = ? AND notebook_id = ? AND created_at >= ?"
-    ).get(m.id, notebookId, weekAgo) as any)?.t ?? 0;
+  const rows = await Promise.all(members.map(async (m: any) => {
+    const [weeklyRow] = await sql`
+      SELECT COALESCE(SUM(duration_seconds), 0) AS t FROM study_sessions WHERE user_id = ${m.id} AND notebook_id = ${notebookId} AND created_at >= ${weekAgo}
+    `;
+    const weeklyStudy = weeklyRow?.t ?? 0;
 
-    const lastActive = (db.prepare(
-      "SELECT MAX(created_at) AS ts FROM study_sessions WHERE user_id = ? AND notebook_id = ?"
-    ).get(m.id, notebookId) as any)?.ts ?? null;
+    const [lastActiveRow] = await sql`
+      SELECT MAX(created_at) AS ts FROM study_sessions WHERE user_id = ${m.id} AND notebook_id = ${notebookId}
+    `;
+    const lastActive = lastActiveRow?.ts ?? null;
 
-    const quizAttempts = (db.prepare(
-      "SELECT COUNT(*) AS c FROM quiz_attempts WHERE user_id = ? AND notebook_id = ?"
-    ).get(m.id, notebookId) as any)?.c ?? 0;
+    const [quizAttemptsRow] = await sql`
+      SELECT COUNT(*) AS c FROM quiz_attempts WHERE user_id = ${m.id} AND notebook_id = ${notebookId}
+    `;
+    const quizAttempts = quizAttemptsRow?.c ?? 0;
 
-    const quizAvg = (db.prepare(
-      "SELECT AVG(CAST(score AS REAL)/total*100) AS avg FROM quiz_attempts WHERE user_id = ? AND notebook_id = ?"
-    ).get(m.id, notebookId) as any)?.avg ?? null;
+    const [quizAvgRow] = await sql`
+      SELECT AVG(CAST(score AS REAL)/total*100) AS avg FROM quiz_attempts WHERE user_id = ${m.id} AND notebook_id = ${notebookId}
+    `;
+    const quizAvg = quizAvgRow?.avg ?? null;
 
-    const pagesAuthored = (db.prepare(
-      `SELECT COUNT(*) AS c FROM page_versions WHERE saved_by = ? AND page_id IN (SELECT id FROM pages WHERE notebook_id = ?)`
-    ).get(m.id, notebookId) as any)?.c ?? 0;
+    const [pagesAuthoredRow] = await sql`
+      SELECT COUNT(*) AS c FROM page_versions WHERE saved_by = ${m.id} AND page_id IN (SELECT id FROM pages WHERE notebook_id = ${notebookId})
+    `;
+    const pagesAuthored = pagesAuthoredRow?.c ?? 0;
 
     return {
       user_id: m.id,
@@ -50,7 +54,7 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
       quiz_avg: quizAvg !== null ? Math.round(quizAvg) : null,
       pages_authored: pagesAuthored,
     };
-  });
+  }));
 
   return ok({ progress: rows });
 }

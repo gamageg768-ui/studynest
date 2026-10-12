@@ -1,11 +1,10 @@
 import { NextRequest } from "next/server";
-import { getDb } from "@/lib/db";
+import { sql } from "@/lib/db";
 import { auth, ok, isResponse } from "@/lib/api-utils";
 
 export async function PATCH(req: NextRequest) {
-  const user = auth(req);
+  const user = await auth(req);
   if (isResponse(user)) return user;
-  const db = getDb();
-  db.prepare("UPDATE notifications SET is_read = 1 WHERE user_id = ?").run(user.id);
+  await sql`UPDATE notifications SET is_read = TRUE WHERE user_id = ${user.id}`;
   return ok({ ok: true });
 }

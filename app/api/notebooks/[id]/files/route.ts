@@ -1,5 +1,5 @@
 import { NextRequest } from "next/server";
-import { getDb, userCanAccess } from "@/lib/db";
+import { sql, userCanAccess } from "@/lib/db";
 import { auth, err, ok, isResponse } from "@/lib/api-utils";
 import { randomBytes } from "crypto";
 import { writeFile, mkdir } from "fs/promises";
@@ -25,24 +25,22 @@ function mimeFromName(name: string): string {
 }
 
 export async function GET(req: NextRequest, { params }: { params: { id: string } }) {
-  const user = auth(req);
+  const user = await auth(req);
   if (isResponse(user)) return user;
   const notebookId = Number(params.id);
-  const { canAccess } = userCanAccess(notebookId, user.id);
+  const { canAccess } = await userCanAccess(notebookId, user.id);
   if (!canAccess) return err("Not found", 404);
-  const files = getDb()
-    .prepare(
-      "SELECT id, notebook_id, original_name, mime_type, file_size, created_at FROM attachments WHERE notebook_id = ? ORDER BY created_at DESC"
-    )
-    .all(notebookId);
+  const files = await sql`
+    SELECT id, notebook_id, original_name, mime_type, file_size, created_at FROM attachments WHERE notebook_id = ${notebookId} ORDER BY created_at DESC
+  `;
   return ok({ files });
 }
 
 export async function POST(req: NextRequest, { params }: { params: { id: string } }) {
-  const user = auth(req);
+  const user = await auth(req);
   if (isResponse(user)) return user;
   const notebookId = Number(params.id);
-  const { canAccess, permission } = userCanAccess(notebookId, user.id);
+  const { canAccess, permission } = await userCanAccess(notebookId, user.id);
   if (!canAccess || permission === "read") return err("Permission denied", 403);
 
   let formData: FormData;
@@ -61,24 +59,20 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
 
   const mimeType = file.type || mimeFromName(originalName);
   const fileSize = buffer.length;
-  const db = getDb();
-  const result = db
-    .prepare(
-      "INSERT INTO attachments (notebook_id, uploader_id, original_name, stored_name, mime_type, file_size) VALUES (?, ?, ?, ?, ?, ?)"
-    )
-    .run(notebookId, user.id, originalName, storedName, mimeType, fileSize);
+  const [newFile] = await sql`
+    INSERT INTO attachments (notebook_id, uploader_id, original_name, stored_name, mime_type, file_size)
+    VALUES (${notebookId}, ${user.id}, ${originalName}, ${storedName}, ${mimeType}, ${fileSize})
+    RETURNING id, created_at
+  `;
 
-  const row = db
-    .prepare("SELECT created_at FROM attachments WHERE id = ?")
-    .get(result.lastInsertRowid) as any;
   return ok(
     {
-      id: result.lastInsertRowid,
+      id: newFile.id,
       notebook_id: notebookId,
       original_name: originalName,
       mime_type: mimeType,
       file_size: fileSize,
-      created_at: row?.created_at || "",
+      created_at: newFile.created_at || "",
     },
     201
   );

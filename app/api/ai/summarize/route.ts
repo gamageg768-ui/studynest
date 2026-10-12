@@ -1,21 +1,20 @@
 import { NextRequest } from "next/server";
-import { getDb, userCanAccess } from "@/lib/db";
+import { sql, userCanAccess } from "@/lib/db";
 import { auth, err, ok, isResponse } from "@/lib/api-utils";
 import { callOllama } from "@/lib/ollama";
 
 export const maxDuration = 300;
 
 export async function POST(req: NextRequest) {
-  const user = auth(req);
+  const user = await auth(req);
   if (isResponse(user)) return user;
   const data = await req.json().catch(() => ({}));
   const pageId = Number(data.page_id);
   if (!pageId) return err("page_id required", 400);
 
-  const db = getDb();
-  const page = db.prepare("SELECT * FROM pages WHERE id = ?").get(pageId) as any;
+  const [page] = await sql`SELECT * FROM pages WHERE id = ${pageId}`;
   if (!page) return err("Not found", 404);
-  const { canAccess } = userCanAccess(page.notebook_id, user.id);
+  const { canAccess } = await userCanAccess(page.notebook_id, user.id);
   if (!canAccess) return err("Not found", 404);
   if (!(page.content || "").trim()) return err("Page is empty", 400);
 

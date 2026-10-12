@@ -2,7 +2,7 @@ import { createServer } from "http";
 import { parse } from "url";
 import next from "next";
 import { Server, Socket } from "socket.io";
-import { getDb, userCanAccess } from "./lib/db";
+import { sql, userCanAccess } from "./lib/db";
 import { getUserFromToken } from "./lib/auth";
 
 const port = parseInt(process.env.PORT || "3000", 10);
@@ -25,23 +25,16 @@ type QuizBattleState = {
 };
 const _quizBattles: Record<string, QuizBattleState> = {};
 
-function recentMessages(notebookId: number, limit = 50) {
-  const db = getDb();
-  const rows = db
-    .prepare(
-      `SELECT id, user_id, display_name, message, created_at
-       FROM chat_messages WHERE notebook_id = ?
-       ORDER BY created_at DESC LIMIT ?`
-    )
-    .all(notebookId, limit) as any[];
+async function recentMessages(notebookId: number, limit = 50) {
+  const rows = await sql`
+    SELECT id, user_id, display_name, message, created_at
+    FROM chat_messages WHERE notebook_id = ${notebookId}
+    ORDER BY created_at DESC LIMIT ${limit}
+  `;
   return rows.reverse();
 }
 
-function removeSidFromAll(
-  io: Server,
-  sid: string
-): void {
-  // notebook sessions
+function removeSidFromAll(io: Server, sid: string): void {
   for (const [room, participants] of Object.entries(_sessions)) {
     if (sid in participants) {
       const user = participants[sid];
@@ -52,8 +45,6 @@ function removeSidFromAll(
       break;
     }
   }
-
-  // study rooms
   for (const [room, state] of Object.entries(_studyRooms)) {
     if (sid in state.sids) {
       const user = state.sids[sid];
@@ -64,8 +55,6 @@ function removeSidFromAll(
       break;
     }
   }
-
-  // flowchart rooms
   for (const [room, participants] of Object.entries(_flowchartRooms)) {
     if (sid in participants) {
       const user = participants[sid];
@@ -76,8 +65,6 @@ function removeSidFromAll(
       break;
     }
   }
-
-  // quiz battles
   for (const [room, state] of Object.entries(_quizBattles)) {
     if (sid in state.sids) {
       const user = state.sids[sid];
@@ -90,9 +77,6 @@ function removeSidFromAll(
 }
 
 app.prepare().then(() => {
-  // Initialize DB on startup
-  getDb();
-
   const httpServer = createServer((req, res) => {
     const parsedUrl = parse(req.url!, true);
     handle(req, res, parsedUrl);
@@ -111,14 +95,14 @@ app.prepare().then(() => {
 
     // ── Notebook presence ──────────────────────────────────────────
 
-    socket.on("join_session", (data: any) => {
+    socket.on("join_session", async (data: any) => {
       data = data || {};
       const token: string = data.token || "";
       const notebookId: number = data.notebook_id;
       if (!notebookId) return;
-      const user = getUserFromToken(token);
+      const user = await getUserFromToken(token);
       if (!user) return;
-      const { canAccess } = userCanAccess(notebookId, user.id);
+      const { canAccess } = await userCanAccess(notebookId, user.id);
       if (!canAccess) return;
 
       const room = `notebook_${notebookId}`;
@@ -129,7 +113,7 @@ app.prepare().then(() => {
 
       socket.emit("session_state", {
         participants: Object.values(_sessions[room]),
-        messages: recentMessages(notebookId),
+        messages: await recentMessages(notebookId),
       });
 
       if (!alreadyPresent) {
@@ -155,12 +139,12 @@ app.prepare().then(() => {
       }
     });
 
-    socket.on("page_update", (data: any) => {
+    socket.on("page_update", async (data: any) => {
       data = data || {};
       const token: string = data.token || "";
       const notebookId: number = data.notebook_id;
       if (!notebookId) return;
-      const user = getUserFromToken(token);
+      const user = await getUserFromToken(token);
       if (!user) return;
       const room = `notebook_${notebookId}`;
       socket.to(room).emit("page_updated", {
@@ -171,38 +155,33 @@ app.prepare().then(() => {
       });
     });
 
-    socket.on("send_message", (data: any) => {
+    socket.on("send_message", async (data: any) => {
       data = data || {};
       const token: string = data.token || "";
       const notebookId: number = data.notebook_id;
       const text: string = (data.message || "").trim();
       if (!notebookId || !text) return;
-      const user = getUserFromToken(token);
+      const user = await getUserFromToken(token);
       if (!user) return;
-      const { canAccess } = userCanAccess(notebookId, user.id);
+      const { canAccess } = await userCanAccess(notebookId, user.id);
       if (!canAccess) return;
 
-      const createdAt = new Date().toISOString().replace("T", " ").slice(0, 19);
-      const db = getDb();
-      const result = db
-        .prepare(
-          `INSERT INTO chat_messages (notebook_id, user_id, display_name, message, created_at)
-           VALUES (?, ?, ?, ?, ?)`
-        )
-        .run(notebookId, user.id, user.display_name, text, createdAt);
+      const [inserted] = await sql`
+        INSERT INTO chat_messages (notebook_id, user_id, display_name, message)
+        VALUES (${notebookId}, ${user.id}, ${user.display_name}, ${text})
+        RETURNING id, created_at
+      `;
 
-      const msgId = Number(result.lastInsertRowid);
       const room = `notebook_${notebookId}`;
       io.to(room).emit("new_message", {
-        id: msgId,
+        id: inserted.id,
         user_id: user.id,
         display_name: user.display_name,
         message: text,
-        created_at: createdAt,
+        created_at: inserted.created_at,
         reactions: {},
       });
 
-      // Detect @mentions and notify mentioned users
       const mentionPattern = /@(\w+)/g;
       let match;
       const mentionedUsernames = new Set<string>();
@@ -210,17 +189,15 @@ app.prepare().then(() => {
         mentionedUsernames.add(match[1].toLowerCase());
       }
 
-      // Notify notebook accessors who are NOT currently in the room + handle @mentions
       try {
-        const nb = db.prepare("SELECT title, owner_id FROM notebooks WHERE id = ?").get(notebookId) as any;
+        const [nb] = await sql`SELECT title, owner_id FROM notebooks WHERE id = ${notebookId}`;
         if (nb) {
-          const accessors = db.prepare(
-            `SELECT DISTINCT u.id, u.username FROM users u
-             WHERE u.id = ?
-             UNION
-             SELECT u.id, u.username FROM users u
-             JOIN shares s ON s.shared_with_user_id = u.id WHERE s.notebook_id = ?`
-          ).all(nb.owner_id, notebookId) as any[];
+          const accessors = await sql`
+            SELECT DISTINCT u.id, u.username FROM users u WHERE u.id = ${nb.owner_id}
+            UNION
+            SELECT u.id, u.username FROM users u
+            JOIN shares s ON s.shared_with_user_id = u.id WHERE s.notebook_id = ${notebookId}
+          `;
 
           const activeSessions = _sessions[room] ?? {};
           const activeUserIds = new Set(Object.values(activeSessions).map((p: any) => p.id));
@@ -229,25 +206,19 @@ app.prepare().then(() => {
             if (accessor.id === user.id) continue;
             const isMentioned = mentionedUsernames.has((accessor.username || "").toLowerCase());
             if (isMentioned) {
-              db.prepare(
-                `INSERT INTO notifications (user_id, type, title, body, data)
-                 VALUES (?, 'mention', ?, ?, ?)`
-              ).run(
-                accessor.id,
-                `${user.display_name} mentioned you`,
-                `In ${nb.title}: ${text.slice(0, 80)}`,
-                JSON.stringify({ notebook_id: notebookId })
-              );
+              await sql`
+                INSERT INTO notifications (user_id, type, title, body, data)
+                VALUES (${accessor.id}, 'mention', ${`${user.display_name} mentioned you`},
+                  ${`In ${nb.title}: ${text.slice(0, 80)}`},
+                  ${JSON.stringify({ notebook_id: notebookId })})
+              `;
             } else if (!activeUserIds.has(accessor.id)) {
-              db.prepare(
-                `INSERT INTO notifications (user_id, type, title, body, data)
-                 VALUES (?, 'chat', ?, ?, ?)`
-              ).run(
-                accessor.id,
-                `New message in ${nb.title}`,
-                `${user.display_name}: ${text.slice(0, 60)}`,
-                JSON.stringify({ notebook_id: notebookId })
-              );
+              await sql`
+                INSERT INTO notifications (user_id, type, title, body, data)
+                VALUES (${accessor.id}, 'chat', ${`New message in ${nb.title}`},
+                  ${`${user.display_name}: ${text.slice(0, 60)}`},
+                  ${JSON.stringify({ notebook_id: notebookId })})
+              `;
             }
           }
         }
@@ -256,18 +227,16 @@ app.prepare().then(() => {
 
     // ── Typing indicators ──────────────────────────────────────────
 
-    socket.on("typing_start", (data: any) => {
+    socket.on("typing_start", async (data: any) => {
       data = data || {};
       const token: string = data.token || "";
       const notebookId: number = data.notebook_id;
       if (!notebookId) return;
-      const user = getUserFromToken(token);
+      const user = await getUserFromToken(token);
       if (!user) return;
       const room = `notebook_${notebookId}`;
       if (!_typingUsers[room]) _typingUsers[room] = {};
-      // Clear existing timer for this user
       if (_typingUsers[room][user.id]) clearTimeout(_typingUsers[room][user.id].timer);
-      // Auto-clear after 4s of no activity
       const timer = setTimeout(() => {
         delete _typingUsers[room]?.[user.id];
         socket.to(room).emit("typing_clear", { user_id: user.id });
@@ -276,12 +245,12 @@ app.prepare().then(() => {
       socket.to(room).emit("typing_user", { user_id: user.id, display_name: user.display_name });
     });
 
-    socket.on("typing_stop", (data: any) => {
+    socket.on("typing_stop", async (data: any) => {
       data = data || {};
       const token: string = data.token || "";
       const notebookId: number = data.notebook_id;
       if (!notebookId) return;
-      const user = getUserFromToken(token);
+      const user = await getUserFromToken(token);
       if (!user) return;
       const room = `notebook_${notebookId}`;
       if (_typingUsers[room]?.[user.id]) {
@@ -293,54 +262,54 @@ app.prepare().then(() => {
 
     // ── Emoji reactions ────────────────────────────────────────────
 
-    socket.on("add_reaction", (data: any) => {
+    socket.on("add_reaction", async (data: any) => {
       data = data || {};
       const token: string = data.token || "";
       const messageId: number = data.message_id;
       const emoji: string = (data.emoji || "").trim();
       if (!messageId || !emoji) return;
-      const user = getUserFromToken(token);
+      const user = await getUserFromToken(token);
       if (!user) return;
-      const db = getDb();
-      const msg = db.prepare("SELECT notebook_id FROM chat_messages WHERE id = ?").get(messageId) as any;
+      const [msg] = await sql`SELECT notebook_id FROM chat_messages WHERE id = ${messageId}`;
       if (!msg) return;
-      const { canAccess } = userCanAccess(msg.notebook_id, user.id);
+      const { canAccess } = await userCanAccess(msg.notebook_id, user.id);
       if (!canAccess) return;
       try {
-        db.prepare(
-          "INSERT OR IGNORE INTO message_reactions (message_id, user_id, emoji) VALUES (?, ?, ?)"
-        ).run(messageId, user.id, emoji);
+        await sql`
+          INSERT INTO message_reactions (message_id, user_id, emoji)
+          VALUES (${messageId}, ${user.id}, ${emoji})
+          ON CONFLICT DO NOTHING
+        `;
         const room = `notebook_${msg.notebook_id}`;
         io.to(room).emit("reaction_added", { message_id: messageId, emoji, user_id: user.id, display_name: user.display_name });
       } catch {}
     });
 
-    socket.on("remove_reaction", (data: any) => {
+    socket.on("remove_reaction", async (data: any) => {
       data = data || {};
       const token: string = data.token || "";
       const messageId: number = data.message_id;
       const emoji: string = (data.emoji || "").trim();
       if (!messageId || !emoji) return;
-      const user = getUserFromToken(token);
+      const user = await getUserFromToken(token);
       if (!user) return;
-      const db = getDb();
-      const msg = db.prepare("SELECT notebook_id FROM chat_messages WHERE id = ?").get(messageId) as any;
+      const [msg] = await sql`SELECT notebook_id FROM chat_messages WHERE id = ${messageId}`;
       if (!msg) return;
-      db.prepare("DELETE FROM message_reactions WHERE message_id = ? AND user_id = ? AND emoji = ?").run(messageId, user.id, emoji);
+      await sql`DELETE FROM message_reactions WHERE message_id = ${messageId} AND user_id = ${user.id} AND emoji = ${emoji}`;
       const room = `notebook_${msg.notebook_id}`;
       io.to(room).emit("reaction_removed", { message_id: messageId, emoji, user_id: user.id });
     });
 
     // ── Live Quiz Battle ───────────────────────────────────────────
 
-    socket.on("join_quiz_battle", (data: any) => {
+    socket.on("join_quiz_battle", async (data: any) => {
       data = data || {};
       const token: string = data.token || "";
       const notebookId: number = data.notebook_id;
       if (!notebookId) return;
-      const user = getUserFromToken(token);
+      const user = await getUserFromToken(token);
       if (!user) return;
-      const { canAccess } = userCanAccess(notebookId, user.id);
+      const { canAccess } = await userCanAccess(notebookId, user.id);
       if (!canAccess) return;
       const room = `qb_${notebookId}`;
       socket.join(room);
@@ -369,13 +338,13 @@ app.prepare().then(() => {
       }
     });
 
-    socket.on("qb_start", (data: any) => {
+    socket.on("qb_start", async (data: any) => {
       data = data || {};
       const token: string = data.token || "";
       const notebookId: number = data.notebook_id;
       const questions = data.questions;
       if (!notebookId || !Array.isArray(questions) || questions.length === 0) return;
-      const user = getUserFromToken(token);
+      const user = await getUserFromToken(token);
       if (!user) return;
       const room = `qb_${notebookId}`;
       const state = _quizBattles[room];
@@ -383,19 +352,18 @@ app.prepare().then(() => {
       state.questions = questions;
       state.currentQ = 0;
       state.active = true;
-      // Reset all scores
       for (const uid of Object.keys(state.scores)) state.scores[Number(uid)].points = 0;
       const q = { ...state.questions[0], correct: -1 };
       io.to(room).emit("qb_question", { question: q, index: 0, total: questions.length, scores: state.scores });
     });
 
-    socket.on("qb_answer", (data: any) => {
+    socket.on("qb_answer", async (data: any) => {
       data = data || {};
       const token: string = data.token || "";
       const notebookId: number = data.notebook_id;
       const answer: number = data.answer;
       if (!notebookId || answer == null) return;
-      const user = getUserFromToken(token);
+      const user = await getUserFromToken(token);
       if (!user) return;
       const room = `qb_${notebookId}`;
       const state = _quizBattles[room];
@@ -406,12 +374,12 @@ app.prepare().then(() => {
       io.to(room).emit("qb_scores", { scores: state.scores });
     });
 
-    socket.on("qb_next", (data: any) => {
+    socket.on("qb_next", async (data: any) => {
       data = data || {};
       const token: string = data.token || "";
       const notebookId: number = data.notebook_id;
       if (!notebookId) return;
-      const user = getUserFromToken(token);
+      const user = await getUserFromToken(token);
       if (!user) return;
       const room = `qb_${notebookId}`;
       const state = _quizBattles[room];
@@ -428,12 +396,12 @@ app.prepare().then(() => {
 
     // ── Flashcard Race Mode ────────────────────────────────────────
 
-    socket.on("race_start", (data: any) => {
+    socket.on("race_start", async (data: any) => {
       data = data || {};
       const token: string = data.token || "";
       const setId: number = data.set_id;
       if (!setId) return;
-      const user = getUserFromToken(token);
+      const user = await getUserFromToken(token);
       if (!user) return;
       const room = `study_${setId}`;
       const state = _studyRooms[room];
@@ -446,13 +414,13 @@ app.prepare().then(() => {
       io.to(room).emit("race_started", { scores: state.raceScores });
     });
 
-    socket.on("race_answer", (data: any) => {
+    socket.on("race_answer", async (data: any) => {
       data = data || {};
       const token: string = data.token || "";
       const setId: number = data.set_id;
       const correct: boolean = data.correct;
       if (!setId || correct == null) return;
-      const user = getUserFromToken(token);
+      const user = await getUserFromToken(token);
       if (!user) return;
       const room = `study_${setId}`;
       const state = _studyRooms[room];
@@ -476,17 +444,16 @@ app.prepare().then(() => {
 
     // ── Flashcard group study ──────────────────────────────────────
 
-    socket.on("join_study", (data: any) => {
+    socket.on("join_study", async (data: any) => {
       data = data || {};
       const token: string = data.token || "";
       const setId: number = data.set_id;
       if (!setId) return;
-      const user = getUserFromToken(token);
+      const user = await getUserFromToken(token);
       if (!user) return;
-      const db = getDb();
-      const s = db.prepare("SELECT notebook_id FROM flashcard_sets WHERE id = ?").get(setId) as any;
+      const [s] = await sql`SELECT notebook_id FROM flashcard_sets WHERE id = ${setId}`;
       if (!s) return;
-      const { canAccess } = userCanAccess(s.notebook_id, user.id);
+      const { canAccess } = await userCanAccess(s.notebook_id, user.id);
       if (!canAccess) return;
 
       const room = `study_${setId}`;
@@ -525,13 +492,13 @@ app.prepare().then(() => {
       }
     });
 
-    socket.on("study_goto", (data: any) => {
+    socket.on("study_goto", async (data: any) => {
       data = data || {};
       const token: string = data.token || "";
       const setId: number = data.set_id;
       const index: number = data.index;
       if (setId == null || index == null) return;
-      const user = getUserFromToken(token);
+      const user = await getUserFromToken(token);
       if (!user) return;
       const room = `study_${setId}`;
       const state = _studyRooms[room];
@@ -541,17 +508,16 @@ app.prepare().then(() => {
 
     // ── Flowchart collaboration ────────────────────────────────────
 
-    socket.on("join_flowchart", (data: any) => {
+    socket.on("join_flowchart", async (data: any) => {
       data = data || {};
       const token: string = data.token || "";
       const chartId: number = data.chart_id;
       if (!chartId) return;
-      const user = getUserFromToken(token);
+      const user = await getUserFromToken(token);
       if (!user) return;
-      const db = getDb();
-      const c = db.prepare("SELECT notebook_id FROM flowcharts WHERE id = ?").get(chartId) as any;
+      const [c] = await sql`SELECT notebook_id FROM flowcharts WHERE id = ${chartId}`;
       if (!c) return;
-      const { canAccess } = userCanAccess(c.notebook_id, user.id);
+      const { canAccess } = await userCanAccess(c.notebook_id, user.id);
       if (!canAccess) return;
 
       const room = `fc_${chartId}`;
@@ -585,23 +551,20 @@ app.prepare().then(() => {
       }
     });
 
-    socket.on("flowchart_save", (data: any) => {
+    socket.on("flowchart_save", async (data: any) => {
       data = data || {};
       const token: string = data.token || "";
       const chartId: number = data.chart_id;
       const source: string = data.source || "";
       if (!chartId) return;
-      const user = getUserFromToken(token);
+      const user = await getUserFromToken(token);
       if (!user) return;
-      const db = getDb();
-      const c = db.prepare("SELECT notebook_id FROM flowcharts WHERE id = ?").get(chartId) as any;
+      const [c] = await sql`SELECT notebook_id FROM flowcharts WHERE id = ${chartId}`;
       if (!c) return;
-      const { canAccess, permission } = userCanAccess(c.notebook_id, user.id);
+      const { canAccess, permission } = await userCanAccess(c.notebook_id, user.id);
       if (!canAccess || permission === "read") return;
 
-      db.prepare(
-        "UPDATE flowcharts SET source = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?"
-      ).run(source, chartId);
+      await sql`UPDATE flowcharts SET source = ${source}, updated_at = NOW() WHERE id = ${chartId}`;
 
       const room = `fc_${chartId}`;
       socket.to(room).emit("fc_updated", { source, updated_by: user.display_name });

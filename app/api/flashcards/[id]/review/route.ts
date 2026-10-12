@@ -1,22 +1,19 @@
 import { NextRequest } from "next/server";
-import { getDb, userCanAccess } from "@/lib/db";
+import { sql, userCanAccess } from "@/lib/db";
 import { auth, err, ok, isResponse } from "@/lib/api-utils";
 
 export async function POST(req: NextRequest, { params }: { params: { id: string } }) {
-  const user = auth(req);
+  const user = await auth(req);
   if (isResponse(user)) return user;
   const cardId = Number(params.id);
-  const db = getDb();
 
-  const card = db
-    .prepare(
-      `SELECT fc.*, fs.notebook_id FROM flashcards fc
-       JOIN flashcard_sets fs ON fs.id = fc.set_id
-       WHERE fc.id = ?`
-    )
-    .get(cardId) as any;
+  const [card] = await sql`
+    SELECT fc.*, fs.notebook_id FROM flashcards fc
+    JOIN flashcard_sets fs ON fs.id = fc.set_id
+    WHERE fc.id = ${cardId}
+  `;
   if (!card) return err("Not found", 404);
-  const { canAccess } = userCanAccess(card.notebook_id, user.id);
+  const { canAccess } = await userCanAccess(card.notebook_id, user.id);
   if (!canAccess) return err("Forbidden", 403);
 
   const data = await req.json().catch(() => ({}));
@@ -41,12 +38,12 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     repetitions = 0;
   }
 
-  const next_review = new Date(Date.now() + interval_days * 86400000).toISOString().slice(0, 19);
+  const next_review = new Date(Date.now() + interval_days * 86400000).toISOString();
 
-  db.prepare(
-    `UPDATE flashcards SET ease_factor = ?, interval_days = ?, repetitions = ?, next_review = ?
-     WHERE id = ?`
-  ).run(ease_factor, interval_days, repetitions, next_review, cardId);
+  await sql`
+    UPDATE flashcards SET ease_factor = ${ease_factor}, interval_days = ${interval_days}, repetitions = ${repetitions}, next_review = ${next_review}
+    WHERE id = ${cardId}
+  `;
 
   return ok({ next_review, interval_days, repetitions, ease_factor });
 }

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getDb, userCanAccess } from "@/lib/db";
+import { sql, userCanAccess } from "@/lib/db";
 import { auth, err, isResponse } from "@/lib/api-utils";
 import { readFile } from "fs/promises";
 import { existsSync } from "fs";
@@ -8,13 +8,12 @@ import path from "path";
 const UPLOAD_DIR = path.join(process.cwd(), "uploads");
 
 export async function GET(req: NextRequest, { params }: { params: { id: string } }) {
-  const user = auth(req);
+  const user = await auth(req);
   if (isResponse(user)) return user;
   const fileId = Number(params.id);
-  const db = getDb();
-  const row = db.prepare("SELECT * FROM attachments WHERE id = ?").get(fileId) as any;
+  const [row] = await sql`SELECT * FROM attachments WHERE id = ${fileId}`;
   if (!row) return err("Not found", 404);
-  const { canAccess } = userCanAccess(row.notebook_id, user.id);
+  const { canAccess } = await userCanAccess(row.notebook_id, user.id);
   if (!canAccess) return err("Permission denied", 403);
 
   const filePath = path.join(UPLOAD_DIR, row.stored_name);
@@ -34,13 +33,12 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
 }
 
 export async function DELETE(req: NextRequest, { params }: { params: { id: string } }) {
-  const user = auth(req);
+  const user = await auth(req);
   if (isResponse(user)) return user;
   const fileId = Number(params.id);
-  const db = getDb();
-  const row = db.prepare("SELECT * FROM attachments WHERE id = ?").get(fileId) as any;
+  const [row] = await sql`SELECT * FROM attachments WHERE id = ${fileId}`;
   if (!row) return err("Not found", 404);
-  const { canAccess, permission } = userCanAccess(row.notebook_id, user.id);
+  const { canAccess, permission } = await userCanAccess(row.notebook_id, user.id);
   if (!canAccess || !["owner", "edit"].includes(permission)) return err("Permission denied", 403);
 
   const filePath = path.join(UPLOAD_DIR, row.stored_name);
@@ -48,6 +46,6 @@ export async function DELETE(req: NextRequest, { params }: { params: { id: strin
     const { unlink } = await import("fs/promises");
     await unlink(filePath);
   }
-  db.prepare("DELETE FROM attachments WHERE id = ?").run(fileId);
+  await sql`DELETE FROM attachments WHERE id = ${fileId}`;
   return NextResponse.json({ ok: true });
 }

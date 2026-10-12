@@ -1,26 +1,25 @@
 import { NextRequest } from "next/server";
-import { getDb, userCanAccess } from "@/lib/db";
+import { sql, userCanAccess } from "@/lib/db";
 import { auth, err, ok, isResponse } from "@/lib/api-utils";
 
 export async function POST(req: NextRequest, { params }: { params: { id: string; vId: string } }) {
-  const user = auth(req);
+  const user = await auth(req);
   if (isResponse(user)) return user;
   const pageId = Number(params.id);
   const vId = Number(params.vId);
-  const db = getDb();
-  const page = db.prepare("SELECT notebook_id FROM pages WHERE id = ?").get(pageId) as any;
+  const [page] = await sql`SELECT notebook_id FROM pages WHERE id = ${pageId}`;
   if (!page) return err("Not found", 404);
-  const { canAccess, permission } = userCanAccess(page.notebook_id, user.id);
+  const { canAccess, permission } = await userCanAccess(page.notebook_id, user.id);
   if (!canAccess || !["owner", "edit"].includes(permission)) return err("Forbidden", 403);
 
-  const version = db
-    .prepare("SELECT title, content FROM page_versions WHERE id = ? AND page_id = ?")
-    .get(vId, pageId) as any;
+  const [version] = await sql`SELECT title, content FROM page_versions WHERE id = ${vId} AND page_id = ${pageId}`;
   if (!version) return err("Version not found", 404);
 
-  db.prepare(
-    "UPDATE pages SET title = ?, content = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?"
-  ).run(version.title, version.content, pageId);
+  await sql`
+    UPDATE pages SET title = ${version.title}, content = ${version.content}, updated_at = NOW()
+    WHERE id = ${pageId}
+  `;
 
-  return ok(db.prepare("SELECT * FROM pages WHERE id = ?").get(pageId));
+  const [updated] = await sql`SELECT * FROM pages WHERE id = ${pageId}`;
+  return ok(updated);
 }

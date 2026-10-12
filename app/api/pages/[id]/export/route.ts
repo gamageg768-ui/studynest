@@ -1,15 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getDb, userCanAccess } from "@/lib/db";
+import { sql, userCanAccess } from "@/lib/db";
 import { auth, err, isResponse } from "@/lib/api-utils";
 
 export async function GET(req: NextRequest, { params }: { params: { id: string } }) {
-  const user = auth(req);
+  const user = await auth(req);
   if (isResponse(user)) return user;
   const pageId = Number(params.id);
-  const db = getDb();
-  const page = db.prepare("SELECT * FROM pages WHERE id = ?").get(pageId) as any;
+  const [page] = await sql`SELECT * FROM pages WHERE id = ${pageId}`;
   if (!page) return err("Not found", 404);
-  const { canAccess } = userCanAccess(page.notebook_id, user.id);
+  const { canAccess } = await userCanAccess(page.notebook_id, user.id);
   if (!canAccess) return err("Not found", 404);
 
   const filename = (page.title || "page").replace(/[^a-z0-9]/gi, "_") + ".md";
