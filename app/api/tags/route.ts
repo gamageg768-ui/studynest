@@ -17,6 +17,7 @@ export async function GET(req: NextRequest) {
 export async function POST(req: NextRequest) {
   const user = await auth(req);
   if (isResponse(user)) return user;
+  if (user.is_guest) return err("Guests cannot create tags", 403);
   const data = await req.json().catch(() => ({}));
   const name = ((data.name as string) || "").trim();
   if (!name) return err("Tag name is required", 400);

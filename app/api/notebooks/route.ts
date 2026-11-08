@@ -31,9 +31,12 @@ export async function POST(req: NextRequest) {
   const data = await req.json().catch(() => ({}));
   const title = ((data.title as string) || "").trim();
   if (!title) return err("Title is required", 400);
+  if (title.length > 200) return err("Title must be 200 characters or less", 400);
   const description = ((data.description as string) || "").trim();
+  if (description.length > 2000) return err("Description must be 2000 characters or less", 400);
   const color = (data.color as string) || "#fef3c7";
-  const icon = (data.icon as string) || "📒";
+  if (!/^#[0-9a-f]{6}$/i.test(color)) return err("Invalid color format", 400);
+  const icon = ((data.icon as string) || "📒").slice(0, 10);
 
   const [notebook] = await sql`
     INSERT INTO notebooks (owner_id, title, description, color, icon) VALUES (${user.id}, ${title}, ${description}, ${color}, ${icon})

@@ -18,7 +18,7 @@ export async function getUserFromToken(token: string): Promise<SessionUser | nul
   const [row] = await sql`
     SELECT u.id, u.username, u.display_name, u.is_guest
     FROM sessions s JOIN users u ON u.id = s.user_id
-    WHERE s.token = ${token}
+    WHERE s.token = ${token} AND s.expires_at > NOW()
   `;
   return (row as SessionUser) || null;
 }

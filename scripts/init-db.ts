@@ -13,6 +13,7 @@ async function main() {
   const client = await pool.connect();
   try {
     await client.query(SCHEMA);
+    await client.query(`ALTER TABLE sessions ADD COLUMN IF NOT EXISTS expires_at TIMESTAMP NOT NULL DEFAULT (NOW() + INTERVAL '30 days')`);
     console.log("✓ Neon schema initialized successfully!");
   } catch (e: any) {
     console.error("✗ Schema init failed:", e.message);

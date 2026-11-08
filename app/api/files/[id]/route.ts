@@ -26,7 +26,7 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
       "Content-Type": row.mime_type,
       "Content-Length": buffer.length.toString(),
       ...(download
-        ? { "Content-Disposition": `attachment; filename="${row.original_name}"` }
+        ? { "Content-Disposition": `attachment; filename="${row.original_name.replace(/[^\x20-\x7E]/g, "").replace(/["\\]/g, "")}"` }
         : {}),
     },
   });

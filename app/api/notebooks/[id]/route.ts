@@ -35,6 +35,10 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
     if (k in data) updates[k] = data[k];
   }
   if (!Object.keys(updates).length) return err("No fields to update", 400);
+  if ("title" in updates && ((updates.title as string) || "").length > 200) return err("Title must be 200 characters or less", 400);
+  if ("description" in updates && ((updates.description as string) || "").length > 2000) return err("Description must be 2000 characters or less", 400);
+  if ("color" in updates && !/^#[0-9a-f]{6}$/i.test((updates.color as string) || "")) return err("Invalid color format", 400);
+  if ("icon" in updates) updates.icon = ((updates.icon as string) || "").slice(0, 10);
 
   // Build dynamic update — use individual field updates
   const { title, description, color, icon } = updates as any;

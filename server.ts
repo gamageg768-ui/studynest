@@ -159,7 +159,7 @@ app.prepare().then(() => {
       data = data || {};
       const token: string = data.token || "";
       const notebookId: number = data.notebook_id;
-      const text: string = (data.message || "").trim();
+      const text: string = (data.message || "").trim().slice(0, 2000);
       if (!notebookId || !text) return;
       const user = await getUserFromToken(token);
       if (!user) return;

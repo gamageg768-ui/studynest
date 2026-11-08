@@ -6,6 +6,8 @@ import { writeFile, mkdir } from "fs/promises";
 import path from "path";
 
 const UPLOAD_DIR = path.join(process.cwd(), "uploads");
+const MAX_FILE_SIZE = 50 * 1024 * 1024;
+const ALLOWED_EXTENSIONS = new Set(["pdf","png","jpg","jpeg","gif","webp","mp3","wav","mp4","webm","txt","md","doc","docx","csv","zip"]);
 
 function secureFilename(name: string): string {
   return name.replace(/[^a-zA-Z0-9.\-_]/g, "_").replace(/^\./, "_");
@@ -48,16 +50,20 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
   const file = formData.get("file") as File | null;
   if (!file || !file.name) return err("No file provided", 400);
 
+  if (file.size > MAX_FILE_SIZE) return err("File exceeds 50 MB limit", 400);
+
   const originalName = secureFilename(file.name);
-  const ext = path.extname(originalName).toLowerCase();
-  const storedName = `${randomBytes(16).toString("hex")}${ext}`;
+  const ext = path.extname(originalName).slice(1).toLowerCase();
+  if (!ALLOWED_EXTENSIONS.has(ext)) return err("File type not allowed", 400);
+
+  const storedName = `${randomBytes(16).toString("hex")}.${ext}`;
   const destPath = path.join(UPLOAD_DIR, storedName);
 
   await mkdir(UPLOAD_DIR, { recursive: true });
   const buffer = Buffer.from(await file.arrayBuffer());
   await writeFile(destPath, buffer);
 
-  const mimeType = file.type || mimeFromName(originalName);
+  const mimeType = mimeFromName(originalName);
   const fileSize = buffer.length;
   const [newFile] = await sql`
     INSERT INTO attachments (notebook_id, uploader_id, original_name, stored_name, mime_type, file_size)

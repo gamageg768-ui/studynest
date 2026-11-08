@@ -30,6 +30,7 @@ CREATE TABLE IF NOT EXISTS users (
 CREATE TABLE IF NOT EXISTS sessions (
     token TEXT PRIMARY KEY,
     user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    expires_at TIMESTAMP NOT NULL DEFAULT (NOW() + INTERVAL '30 days'),
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -228,4 +229,10 @@ CREATE INDEX IF NOT EXISTS idx_page_tags_tag ON page_tags(tag_id);
 CREATE INDEX IF NOT EXISTS idx_reactions_message ON message_reactions(message_id);
 CREATE INDEX IF NOT EXISTS idx_comments_page ON page_comments(page_id);
 CREATE INDEX IF NOT EXISTS idx_study_events_notebook ON study_events(notebook_id, scheduled_at);
+
+CREATE TABLE IF NOT EXISTS rate_limits (
+    key TEXT PRIMARY KEY,
+    count INTEGER NOT NULL DEFAULT 1,
+    window_start TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
 `;

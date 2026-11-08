@@ -15,6 +15,8 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
   const front = ((data.front as string) || "").trim();
   const back = ((data.back as string) || "").trim();
   if (!front || !back) return err("front and back required", 400);
+  if (front.length > 1000) return err("Front must be 1000 characters or less", 400);
+  if (back.length > 1000) return err("Back must be 1000 characters or less", 400);
 
   const [maxPosRow] = await sql`SELECT COALESCE(MAX(position), -1) AS m FROM flashcards WHERE set_id = ${setId}`;
   const pos = ((maxPosRow?.m as number) ?? -1) + 1;

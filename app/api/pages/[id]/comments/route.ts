@@ -23,10 +23,12 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
   const { canAccess } = await userCanAccess(page.notebook_id, user.id);
   if (!canAccess) return err("Not found", 404);
 
+  if (user.is_guest) return err("Guests cannot post comments", 403);
   const data = await req.json().catch(() => ({}));
   const body = ((data.body as string) || "").trim();
   const anchorText = ((data.anchor_text as string) || "").trim();
   if (!body) return err("Comment body required", 400);
+  if (body.length > 2000) return err("Comment must be 2000 characters or less", 400);
 
   const [newComment] = await sql`
     INSERT INTO page_comments (page_id, user_id, display_name, anchor_text, body)

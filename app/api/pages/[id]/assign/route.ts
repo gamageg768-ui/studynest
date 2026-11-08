@@ -20,6 +20,7 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
 export async function PATCH(req: NextRequest, { params }: { params: { id: string } }) {
   const user = await auth(req);
   if (isResponse(user)) return user;
+  if (user.is_guest) return err("Guests cannot assign pages", 403);
   const pageId = Number(params.id);
   const [page] = await sql`SELECT notebook_id, title FROM pages WHERE id = ${pageId}`;
   if (!page) return err("Not found", 404);

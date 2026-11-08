@@ -5,6 +5,7 @@ import { auth, err, ok, isResponse } from "@/lib/api-utils";
 export async function POST(req: NextRequest) {
   const user = await auth(req);
   if (isResponse(user)) return user;
+  if (user.is_guest) return err("Guests cannot log study sessions", 403);
   const data = await req.json().catch(() => ({}));
   const duration_seconds = Number(data.duration_seconds);
   if (!duration_seconds || duration_seconds <= 0) return err("duration_seconds must be positive", 400);

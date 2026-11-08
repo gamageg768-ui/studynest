@@ -26,6 +26,8 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
   const hasTitle = "title" in data;
   const hasContent = "content" in data;
   if (!hasTitle && !hasContent) return err("No fields to update", 400);
+  if (hasTitle && (data.title as string || "").length > 300) return err("Title must be 300 characters or less", 400);
+  if (hasContent && Buffer.byteLength((data.content as string) || "", "utf8") > 200 * 1024) return err("Content exceeds 200 KB limit", 400);
 
   // Snapshot current content before overwrite
   const [existing] = await sql`SELECT title, content FROM pages WHERE id = ${pageId}`;

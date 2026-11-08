@@ -21,7 +21,8 @@ export async function POST(req: NextRequest) {
   const combined = pages
     .filter((p: any) => (p.content || "").trim())
     .map((p: any) => `## ${p.title}\n${p.content}`)
-    .join("\n\n---\n\n");
+    .join("\n\n---\n\n")
+    .slice(0, 8000);
   if (!combined.trim()) return err("All pages are empty", 400);
 
   try {

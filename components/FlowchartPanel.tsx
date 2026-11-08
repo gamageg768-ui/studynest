@@ -1,11 +1,12 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
 import mermaid from "mermaid";
+import DOMPurify from "dompurify";
 import { flowchartApi, aiApi, getErrorMessage } from "@/lib/client";
 import type { Flowchart } from "@/types";
 import { getSocket } from "@/lib/socket";
 
-mermaid.initialize({ startOnLoad: false, theme: "default", securityLevel: "loose" });
+mermaid.initialize({ startOnLoad: false, theme: "default", securityLevel: "sandbox" });
 
 interface Props {
   notebookId: number;
@@ -25,7 +26,7 @@ function useMermaid(source: string) {
     const id = `mermaid-${++idRef.current}`;
     setRenderError("");
     mermaid.render(id, source)
-      .then(({ svg: out }) => setSvg(out))
+      .then(({ svg: out }) => setSvg(DOMPurify.sanitize(out, { USE_PROFILES: { svg: true, svgFilters: true } })))
       .catch((e: unknown) => { setSvg(""); setRenderError(e instanceof Error ? e.message : "Diagram syntax error"); });
   }, [source]);
   return { svg, renderError };

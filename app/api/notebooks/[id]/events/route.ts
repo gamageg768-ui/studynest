@@ -19,6 +19,7 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
 export async function POST(req: NextRequest, { params }: { params: { id: string } }) {
   const user = await auth(req);
   if (isResponse(user)) return user;
+  if (user.is_guest) return err("Guests cannot create events", 403);
   const notebookId = Number(params.id);
   const { canAccess, permission } = await userCanAccess(notebookId, user.id);
   if (!canAccess) return err("Not found", 404);
