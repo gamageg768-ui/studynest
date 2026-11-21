@@ -34,6 +34,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
 
   const [tag] = await sql`SELECT user_id FROM tags WHERE id = ${tagId}`;
   if (!tag) return err("Tag not found", 404);
+  if (tag.user_id !== user.id) return err("Forbidden", 403);
 
   try {
     await sql`INSERT INTO page_tags (page_id, tag_id) VALUES (${pageId}, ${tagId}) ON CONFLICT DO NOTHING`;

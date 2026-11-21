@@ -40,6 +40,7 @@ export async function DELETE(req: NextRequest, { params }: { params: { id: strin
   if (!row) return err("Not found", 404);
   const { canAccess, permission } = await userCanAccess(row.notebook_id, user.id);
   if (!canAccess || !["owner", "edit"].includes(permission)) return err("Permission denied", 403);
+  if (permission !== "owner" && row.uploader_id !== user.id) return err("Permission denied", 403);
 
   const filePath = path.join(UPLOAD_DIR, row.stored_name);
   if (existsSync(filePath)) {

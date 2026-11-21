@@ -8,6 +8,7 @@ export async function PATCH(req: NextRequest) {
   const data = await req.json().catch(() => ({}));
   const display_name = ((data.display_name as string) || "").trim();
   if (!display_name) return err("Display name cannot be empty", 400);
+  if (display_name.length > 50) return err("Display name must be 50 characters or less", 400);
 
   await sql`UPDATE users SET display_name = ${display_name} WHERE id = ${user.id}`;
   const [updated] = await sql`SELECT id, username, display_name, is_guest FROM users WHERE id = ${user.id}`;

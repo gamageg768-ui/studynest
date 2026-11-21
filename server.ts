@@ -84,7 +84,7 @@ app.prepare().then(() => {
 
   const io = new Server(httpServer, {
     path: "/socket.io",
-    cors: { origin: "*" },
+    cors: { origin: process.env.NEXT_PUBLIC_SITE_URL || "http://localhost:3000" },
     transports: ["polling", "websocket"],
   });
 
@@ -222,7 +222,7 @@ app.prepare().then(() => {
             }
           }
         }
-      } catch {}
+      } catch (e) { console.error("Chat notification failed:", e); }
     });
 
     // ── Typing indicators ──────────────────────────────────────────
@@ -405,7 +405,7 @@ app.prepare().then(() => {
       if (!user) return;
       const room = `study_${setId}`;
       const state = _studyRooms[room];
-      if (!state) return;
+      if (!state || state.raceActive) return;
       state.raceActive = true;
       state.raceScores = {};
       for (const p of Object.values(state.sids)) {

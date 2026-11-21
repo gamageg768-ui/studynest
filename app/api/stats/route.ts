@@ -42,6 +42,7 @@ export async function GET(req: NextRequest) {
   const today_d = new Date();
   today_d.setHours(0, 0, 0, 0);
   for (const row of dates) {
+    if (!row?.study_date) continue;
     const dt = new Date(row.study_date + "T00:00:00");
     if (dt.getTime() === today_d.getTime()) {
       streak_days++;

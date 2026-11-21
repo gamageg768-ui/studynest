@@ -31,7 +31,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
   if (!targetUsername) return err("Username is required", 400);
 
   const [target] = await sql`SELECT id, username, display_name FROM users WHERE username = ${targetUsername}`;
-  if (!target) return err(`No user named '${targetUsername}'`, 404);
+  if (!target) return err("No user found with that username", 404);
   if (target.id === user.id) return err("You can't share a notebook with yourself", 400);
 
   try {

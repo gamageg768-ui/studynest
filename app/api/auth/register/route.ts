@@ -13,7 +13,8 @@ export async function POST(req: NextRequest) {
   if (!username || !password) return err("Username and password are required", 400);
   if (username.length < 3 || username.length > 30)
     return err("Username must be 3-30 characters", 400);
-  if (password.length < 6) return err("Password must be at least 6 characters", 400);
+  if (display_name.length > 50) return err("Display name must be 50 characters or less", 400);
+  if (password.length < 8) return err("Password must be at least 8 characters", 400);
 
   const pw_hash = await bcrypt.hash(password, 10);
   try {
